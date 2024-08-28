@@ -57,7 +57,7 @@ async function manageTradingAssets(symbol) {
 
   try {
     // Check and close open positions
-    await getFuturesPosition(symbol, productType, marginCoin);
+    await getFuturesPositions(symbol, productType, marginCoin);
 
     // Check and cancel pending limit orders
     await getFuturesOrder(symbol, productType, marginCoin);
@@ -66,8 +66,8 @@ async function manageTradingAssets(symbol) {
     await futuresCancelAllOrders(symbol, productType, marginCoin);
 
     // Final check to ensure all orders and positions are closed
-    await getFuturesPosition(symbol, productType, marginCoin);
-    await cancelPendingOrders(symbol, productType, marginCoin);
+    await getFuturesPositions(symbol, productType, marginCoin);
+    await futuresCancelOrder(symbol, productType, marginCoin);
 
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
