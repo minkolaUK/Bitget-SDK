@@ -1,6 +1,5 @@
 const express = require('express');
 const {
-  FuturesClient,
   isWsFuturesAccountSnapshotEvent,
   isWsFuturesPositionsSnapshotEvent,
   WebsocketClientV2,
@@ -22,13 +21,6 @@ if (!API_KEY || !API_SECRET || !API_PASSPHRASE) {
   process.exit(1);
 }
 
-// Initialize clients
-const futuresClient = new FuturesClient({
-  apiKey: API_KEY,
-  apiSecret: API_SECRET,
-  apiPass: API_PASSPHRASE,
-});
-
 const wsClient = new WebsocketClientV2({
   apiKey: API_KEY,
   apiSecret: API_SECRET,
@@ -48,6 +40,13 @@ function logWSEvent(type, data) {
 // Simple sleep function
 function promiseSleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+// WARNING: for sensitive math you should be using a library such as decimal.js!
+function roundDown(value, decimals) {
+  return Number(
+    Math.floor(parseFloat(value + 'e' + decimals)) + 'e-' + decimals
+  );
 }
 
 // Function to manage open positions and orders
@@ -99,21 +98,15 @@ async function closeOpenPositions(symbol, productType) {
 // Function to cancel all orders
 async function cancelAllOrders(symbol, productType, marginCoin) {
   try {
-    // Cancel all pending orders
-    await restClientV2.futuresCancelAllOrders({ symbol, productType, marginCoin });
-
-    // You may also want to cancel any remaining limit orders if needed
-    // This will cancel orders that were already pending
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ symbol, productType });
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ productType, marginCoin: "USDT" });
     const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
       console.log('Pending orders found. Canceling all pending orders.');
       for (const order of pendingOrders) {
         const cancelResponse = await restClientV2.futuresCancelOrder({
-          symbol: order.symbol,
-          productType,
-          orderId: order.orderId,
+          symbol,
+          marginCoin,
         });
         console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
       }
@@ -196,11 +189,11 @@ app.post('/webhook', async (req, res) => {
       marginCoin,
       force,
       side,
-      leverage, // Apply leverage if provided
-      presetTakeProfitPrice, // Apply take profit if provided
-      presetStopLossPrice, // Apply stop loss if provided
-      triggerPrice, // Apply trigger price if provided
-      triggerType // Apply trigger type
+      leverage, 
+      presetTakeProfitPrice, 
+      presetStopLossPrice, 
+      triggerPrice, 
+      triggerType 
     };
 
     console.log('Placing order: ', order);
@@ -217,24 +210,36 @@ app.post('/webhook', async (req, res) => {
 // Start WebSocket client and handle events
 (async () => {
   try {
-    // Add event listeners to log websocket events
+    // Add event listeners to log websocket events on account
     wsClient.on('update', (data) => handleWsUpdate(data));
     wsClient.on('open', (data) => logWSEvent('open', data));
     wsClient.on('response', (data) => logWSEvent('response', data));
     wsClient.on('reconnect', (data) => logWSEvent('reconnect', data));
     wsClient.on('reconnected', (data) => logWSEvent('reconnected', data));
     wsClient.on('authenticated', (data) => logWSEvent('authenticated', data));
-    wsClient.on('error', (data) => logWSEvent('error', data));
+    wsClient.on('exception', (data) => logWSEvent('exception', data));
 
-    // Connect to WebSocket
-    wsClient.connect();
+    // Subscribe to private account topics
+    wsClient.subscribeTopic('USDT-FUTURES', 'account');
+    wsClient.subscribeTopic('USDT-FUTURES', 'positions');
+    wsClient.subscribeTopic('USDT-FUTURES', 'trade');
+    wsClient.subscribeTopic('USDT-FUTURES', 'ticker');
+    wsClient.subscribeTopic('USDT-FUTURES', 'fill');
+    wsClient.subscribeTopic('USDT-FUTURES', 'orders');
+    wsClient.subscribeTopic('USDT-FUTURES', 'orders-algo');
+    wsClient.subscribeTopic('USDT-FUTURES', 'positions-history');
 
-    // Start the server
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
+    // Wait briefly for ws to be ready
+    await promiseSleep(2.5 * 1000);
+
+    console.log('WebSocket client connected and subscribed to topics.');
   } catch (e) {
-    console.error('Error starting WebSocket client or server:', e.message);
+    console.error('Error setting up WebSocket client:', e);
   }
 })();
+
+// Start the Express server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
