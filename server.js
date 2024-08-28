@@ -52,33 +52,26 @@ function promiseSleep(milliseconds) {
 
 // Function to manage open positions and orders
 async function manageTradingAssets(symbol) {
-  const productType = "USDT-FUTURES"; // This can be moved to env variables for flexibility
-  const marginCoin = "USDT"; // This can be moved to env variables for flexibility
+  const productType = "USDT-FUTURES";
+  const marginCoin = "USDT";
 
   try {
-    // Check and close open positions
-    await getFuturesPositions(symbol, productType, marginCoin);
+    // Close all open positions
+    await closeOpenPositions(symbol, productType);
 
-    // Check and cancel pending limit orders
-    await getFuturesOrder(symbol, productType, marginCoin);
-
-    // Check and cancel limit orders
-    await futuresCancelAllOrders(symbol, productType, marginCoin);
-
-    // Final check to ensure all orders and positions are closed
-    await getFuturesPositions(symbol, productType, marginCoin);
-    await futuresCancelOrder(symbol, productType, marginCoin);
-
+    // Cancel all open orders
+    await cancelAllOrders(symbol, productType, marginCoin);
+    
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
   }
 }
 
-// Function to close open position
-async function getFuturesPosition(symbol, productType, marginCoin) {
+// Function to close open positions
+async function closeOpenPositions(symbol, productType) {
   try {
-    const positionsResult = await restClientV2.getFuturesPosition({ productType, marginCoin });
+    const positionsResult = await restClientV2.getFuturesPositions({ productType, marginCoin: "USDT" });
     const positions = positionsResult.data;
 
     if (positions.length > 0) {
@@ -87,8 +80,9 @@ async function getFuturesPosition(symbol, productType, marginCoin) {
         if (position.symbol === symbol) {
           const holdSide = position.holdSide; // Determine if the position is long or short
           const closeResponse = await restClientV2.futuresFlashClosePositions({
+            symbol,
             productType,
-            marginCoin,
+            holdSide,
           });
           console.log(`Position closed for ${symbol} on ${holdSide} side.`, closeResponse);
         }
@@ -102,19 +96,23 @@ async function getFuturesPosition(symbol, productType, marginCoin) {
   }
 }
 
-// Function to cancel pending orders
-async function futuresCancelAllOrders(symbol, productType, marginCoin) {
+// Function to cancel all orders
+async function cancelAllOrders(symbol, productType, marginCoin) {
   try {
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ productType, marginCoin });
+    // Cancel all pending orders
+    await restClientV2.futuresCancelAllOrders({ symbol, productType, marginCoin });
+
+    // You may also want to cancel any remaining limit orders if needed
+    // This will cancel orders that were already pending
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ symbol, productType });
     const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
       console.log('Pending orders found. Canceling all pending orders.');
       for (const order of pendingOrders) {
-        const cancelResponse = await restClientV2.futuresCancelAllOrders({
+        const cancelResponse = await restClientV2.futuresCancelOrder({
           symbol: order.symbol,
           productType,
-          marginCoin,
           orderId: order.orderId,
         });
         console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
@@ -123,57 +121,7 @@ async function futuresCancelAllOrders(symbol, productType, marginCoin) {
       console.log('No pending orders found.');
     }
   } catch (e) {
-    console.error('Error canceling pending orders:', e.message);
-    throw e; // Rethrow error to handle it in the parent function
-  }
-}
-
-// Function to cancel limit orders
-async function futuresOpenOrders(symbol, productType, marginCoin) {
-  try {
-    const limitOrdersResult = await restClientV2.getFuturesOpenOrders({ productType, marginCoin });
-    const limitOrders = limitOrdersResult.data;
-
-    if (limitOrders.length > 0) {
-      console.log('Limit orders found. Canceling all limit orders.');
-      for (const order of limitOrders) {
-        const cancelResponse = await restClientV2.futuresCancelAllOrders({
-          symbol: order.symbol,
-          productType,
-          marginCoin,
-          orderId: order.orderId,
-        });
-        console.log(`Limit order canceled for ${symbol}.`, cancelResponse);
-      }
-    } else {
-      console.log('No limit orders found.');
-    }
-  } catch (e) {
-    console.error('Error canceling limit orders:', e.message);
-    throw e; // Rethrow error to handle it in the parent function
-  }
-}
-
-// Function to ensure all orders and positions are closed
-async function getFuturesOrder(symbol, productType, marginCoin) {
-  try {
-    const positionsResult = await futuresClient.getFuturesOrder({ symbol });
-    const positions = positionsResult.data;
-
-    if (positions.length > 0) {
-      throw new Error('Not all positions are closed.');
-    }
-
-    const ordersResult = await restClientV2.futuresCancelAllOrders({ symbol, productType });
-    const orders = ordersResult.data;
-
-    if (orders.length > 0) {
-      throw new Error('Not all orders are canceled.');
-    }
-
-    console.log('All positions and orders are closed.');
-  } catch (e) {
-    console.error('Error ensuring all are closed:', e.message);
+    console.error('Error canceling orders:', e.message);
     throw e; // Rethrow error to handle it in the parent function
   }
 }
@@ -220,7 +168,7 @@ app.post('/webhook', async (req, res) => {
     await manageTradingAssets(symbol);
 
     // Fetch account balance
-    const balanceResult = await futuresClient.getFuturesAccountAsset({ symbol, marginCoin });
+    const balanceResult = await restClientV2.getFuturesAccountAsset({ symbol, marginCoin });
     const accountBalance = balanceResult.data;
     const availableBalance = accountBalance.available;
 
@@ -232,7 +180,7 @@ app.post('/webhook', async (req, res) => {
     // Set leverage if provided
     if (leverage) {
       try {
-        await futuresClient.setLeverage({ symbol, marginCoin, leverage });
+        await restClientV2.setFuturesLeverage({ symbol, marginCoin, leverage });
       } catch (e) {
         console.error('Error setting leverage:', e.message);
         return res.status(500).json({ error: 'Failed to set leverage' });
@@ -256,7 +204,7 @@ app.post('/webhook', async (req, res) => {
     };
 
     console.log('Placing order: ', order);
-    const result = await futuresClient.submitOrder(order);
+    const result = await restClientV2.futuresSubmitOrder(order);
     console.log('Order result: ', result);
 
     res.status(200).json(result);
@@ -282,7 +230,7 @@ app.post('/webhook', async (req, res) => {
     wsClient.connect();
 
     // Start the server
-    const PORT = process.env.PORT || 3000
+    const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
