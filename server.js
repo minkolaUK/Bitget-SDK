@@ -60,7 +60,7 @@ async function manageTradingAssets(symbol) {
 
     // Cancel all open orders
     await cancelAllOrders(symbol, productType, marginCoin);
-    
+
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
@@ -98,7 +98,7 @@ async function closeOpenPositions(symbol, productType) {
 // Function to cancel all orders
 async function cancelAllOrders(symbol, productType, marginCoin) {
   try {
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ productType, marginCoin: "USDT" });
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ productType, marginCoin });
     const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
@@ -106,7 +106,7 @@ async function cancelAllOrders(symbol, productType, marginCoin) {
       for (const order of pendingOrders) {
         const cancelResponse = await restClientV2.futuresCancelOrder({
           symbol,
-          marginCoin,
+          orderId: order.orderId, // Use the order ID to cancel specific orders
         });
         console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
       }
@@ -119,7 +119,7 @@ async function cancelAllOrders(symbol, productType, marginCoin) {
   }
 }
 
-/** WS event handler that uses type guards to narrow down event type */
+// WS event handler that uses type guards to narrow down event type
 async function handleWsUpdate(event) {
   if (isWsFuturesAccountSnapshotEvent(event)) {
     console.log(new Date(), 'ws update (account balance):', event);
@@ -134,6 +134,49 @@ async function handleWsUpdate(event) {
   logWSEvent('update (unhandled)', event);
 }
 
+// Function to place a trade with stop-loss and take-profit
+async function placeTrade(symbol, price, size, orderType, marginCoin, force, side, leverage, presetTakeProfitPrice, presetStopLossPrice) {
+  const productType = 'UMCBL'; // Use 'UMCBL' for USDT perpetual futures
+  const marginMode = 'isolated'; // Can be 'isolated' or 'crossed'
+  const tradeSide = 'open'; // 'open' for new positions, 'close' for closing positions
+
+  try {
+    // Set leverage
+    const holdSide = side === 'buy' ? 'long' : 'short';
+    await restClientV2.setFuturesLeverage({
+      symbol,
+      productType,
+      marginCoin,
+      leverage,
+      holdSide
+    });
+
+    // Place the order
+    const order = {
+      symbol,
+      productType,
+      marginMode,
+      marginCoin,
+      size,
+      price,
+      side,
+      tradeSide,
+      orderType,
+      force,
+      presetTakeProfitPrice, // Added take-profit price
+      presetStopLossPrice   // Added stop-loss price
+    };
+
+    console.log('Placing order: ', order);
+    const result = await restClientV2.futuresSubmitOrder(order);
+    console.log('Order result: ', result);
+    return result;
+  } catch (e) {
+    console.error('Error placing order:', e.response ? e.response.data : e.message);
+    throw e;
+  }
+}
+
 // Webhook endpoint to place an order
 app.post('/webhook', async (req, res) => {
   const {
@@ -146,9 +189,7 @@ app.post('/webhook', async (req, res) => {
     side,
     leverage,
     presetTakeProfitPrice,
-    presetStopLossPrice,
-    triggerPrice,
-    triggerType = 'fill_price' // Trigger type, defaults to 'fill_price' (market price)
+    presetStopLossPrice
   } = req.body;
 
   // Validate request data
@@ -160,45 +201,8 @@ app.post('/webhook', async (req, res) => {
     // Manage open positions and orders before placing a new order
     await manageTradingAssets(symbol);
 
-    // Fetch account balance
-    const balanceResult = await restClientV2.getFuturesAccountAsset({ symbol, marginCoin });
-    const accountBalance = balanceResult.data;
-    const availableBalance = accountBalance.available;
-
-    // Check if the order size is within the available balance
-    if (parseFloat(size) > parseFloat(availableBalance)) {
-      return res.status(400).json({ error: 'Order amount exceeds available balance' });
-    }
-
-    // Set leverage if provided
-    if (leverage) {
-      try {
-        await restClientV2.setFuturesLeverage({ symbol, marginCoin, leverage });
-      } catch (e) {
-        console.error('Error setting leverage:', e.message);
-        return res.status(500).json({ error: 'Failed to set leverage' });
-      }
-    }
-
-    // Place the order
-    const order = {
-      symbol,
-      price,
-      size,
-      orderType,
-      marginCoin,
-      force,
-      side,
-      leverage, 
-      presetTakeProfitPrice, 
-      presetStopLossPrice, 
-      triggerPrice, 
-      triggerType 
-    };
-
-    console.log('Placing order: ', order);
-    const result = await restClientV2.futuresSubmitOrder(order);
-    console.log('Order result: ', result);
+    // Place the trade
+    const result = await placeTrade(symbol, price, size, orderType, marginCoin, force, side, leverage, presetTakeProfitPrice, presetStopLossPrice);
 
     res.status(200).json(result);
   } catch (e) {
