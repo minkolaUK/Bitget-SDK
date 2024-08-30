@@ -55,8 +55,8 @@ async function manageTradingAssets(symbol) {
   const marginCoin = "USDT";
 
   try {
-    const accountAssets = await restClientV2.getFuturesOrder({ symbol, productType });
-    console.log('Account assets:', accountAssets);
+    const accountOrders = await restClientV2.getFuturesOrder({ symbol, productType });
+    console.log('Account assets:', accountOrders);
 
     // Close all open order
     await futuresfuturesCancelOrder(symbol, productType, );
