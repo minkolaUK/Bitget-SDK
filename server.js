@@ -49,21 +49,20 @@ function roundDown(value, decimals) {
   );
 }
 
-// Function to close all open positions and cancel orders
+// Function to close open limit orders
 async function manageTradingAssets(symbol) {
   const productType = "USDT-FUTURES";
   const marginCoin = "USDT";
 
   try {
-    // Example: Retrieve account assets
-    const accountAssets = await restClientV2.getFuturesAccountAssets({ productType });
+    const accountAssets = await restClientV2.getFuturesOrder({ symbol, productType });
     console.log('Account assets:', accountAssets);
 
-    // Close all open positions
-    await closeOpenPositions(symbol, productType);
+    // Close all open order
+    await futuresfuturesCancelOrder(symbol, productType, );
 
     // Cancel all open orders
-    await cancelAllOrders(symbol, productType, marginCoin);
+    await futuresCancelAllOrders(symbol, productType, marginCoin);
 
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
@@ -84,8 +83,8 @@ async function closeOpenPositions(symbol, productType) {
           const holdSide = position.holdSide; // Determine if the position is long or short
           const closeResponse = await restClientV2.futuresFlashClosePositions({
             symbol,
-            productType,
             holdSide,
+            productType,
           });
           console.log(`Position closed for ${symbol} on ${holdSide} side.`, closeResponse);
         }
@@ -168,8 +167,8 @@ async function placeTrade(symbol, price, size, side, leverage, presetTakeProfitP
       side,
       orderType,
       force,
-      presetTakeProfitPrice, // Added take-profit price
-      presetStopLossPrice   // Added stop-loss price
+      presetTakeProfitPrice,
+      presetStopLossPrice
     };
 
     console.log('Placing order: ', order);
