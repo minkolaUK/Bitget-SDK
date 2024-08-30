@@ -11,7 +11,9 @@ const app = express();
 app.use(express.json());
 
 // Read from environmental variables
-const { API_KEY, API_SECRET, API_PASSPHRASE, PORT = 3000 } = process.env;
+const API_KEY = process.env.API_KEY;
+const API_SECRET = process.env.API_SECRET;
+const API_PASSPHRASE = process.env.API_PASSPHRASE;
 
 // Ensure API credentials are set
 if (!API_KEY || !API_SECRET || !API_PASSPHRASE) {
@@ -32,11 +34,13 @@ const restClientV2 = new RestClientV2({
 });
 
 function logWSEvent(type, data) {
-  console.log(`[${new Date().toISOString()}] WS ${type} event:`, data);
+  console.log(new Date(), `WS ${type} event:`, data);
 }
 
 // Simple sleep function
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+function promiseSleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 // WARNING: for sensitive math you should be using a library such as decimal.js!
 function roundDown(value, decimals) {
@@ -45,56 +49,11 @@ function roundDown(value, decimals) {
   );
 }
 
-// Function to close open limit orders and positions
-async function manageTradingAssets(symbol) {
-  const productType = "USDT-FUTURES";
-  const marginCoin = "USDT";
-
-  try {
-    // Fetch and cancel all open orders
-    await cancelAllOrders(symbol, productType, marginCoin);
-    
-    // Close open positions
-    await closeOpenPositions(symbol, productType, marginCoin);
-
-    console.log('Successfully managed trading assets for', symbol);
-  } catch (error) {
-    console.error('Error managing trading assets:', error.message);
-    throw new Error('Failed to manage trading assets.');
-  }
-}
-
-// Function to close open positions
-async function closeOpenPositions(symbol, productType) {
-  try {
-    const { data: positions } = await restClientV2.getFuturesPositions({ productType, marginCoin: "USDT" });
-
-    if (positions.length > 0) {
-      console.log('Open positions found. Closing all positions.');
-      for (const position of positions) {
-        if (position.symbol === symbol) {
-          const holdSide = position.holdSide; // Determine if the position is long or short
-          const closeResponse = await restClientV2.futuresFlashClosePositions({
-            symbol,
-            holdSide,
-            productType,
-          });
-          console.log(`Position closed for ${symbol} on ${holdSide} side.`, closeResponse);
-        }
-      }
-    } else {
-      console.log('No open positions found.');
-    }
-  } catch (error) {
-    console.error('Error closing open positions:', error.message);
-    throw error; // Rethrow error to handle it in the parent function
-  }
-}
-
-// Function to cancel all open orders
+// Function to cancel all orders
 async function cancelAllOrders(symbol, productType, marginCoin) {
   try {
-    const { data: pendingOrders } = await restClientV2.getFuturesOpenOrders({ symbol, productType });
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ symbol, productType });
+    const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
       console.log('Pending orders found. Canceling all pending orders.');
@@ -110,25 +69,87 @@ async function cancelAllOrders(symbol, productType, marginCoin) {
     } else {
       console.log('No pending orders found.');
     }
-  } catch (error) {
-    console.error('Error canceling orders:', error.message);
-    throw error; // Rethrow error to handle it in the parent function
+  } catch (e) {
+    console.error('Error canceling orders:', e.message);
+    throw e; // Rethrow error to handle it in the parent function
   }
 }
 
-// WS event handler that uses type guards to narrow down event type
-async function handleWsUpdate(event) {
-  if (isWsFuturesAccountSnapshotEvent(event)) {
-    console.log(new Date(), 'ws update (account balance):', event);
-    return;
-  }
+// Function to close open positions
+async function closeOpenPositions(symbol, productType) {
+  try {
+    const positionsResult = await restClientV2.getFuturesPositions({ productType, marginCoin: "USDT" });
+    const positions = positionsResult.data;
 
-  if (isWsFuturesPositionsSnapshotEvent(event)) {
-    console.log(new Date(), 'ws update (positions):', event);
-    return;
-  }
+    if (positions.length > 0) {
+      console.log('Open positions found. Attempting to close all positions.');
 
-  logWSEvent('update (unhandled)', event);
+      for (const position of positions) {
+        if (position.symbol === symbol) {
+          const holdSide = position.holdSide; // Determine if the position is long or short
+
+          // Attempt to close the position using a limit order first
+          try {
+            const closePrice = calculateClosePrice(position); // Implement this function to determine the price
+
+            console.log(`Attempting to close position with a limit order for ${symbol} on ${holdSide} side.`);
+            await placeTrade(symbol, closePrice, position.size, holdSide === 'long' ? 'sell' : 'buy', 1, null, null);
+            console.log(`Limit order placed to close position for ${symbol} on ${holdSide} side.`);
+
+            // Wait and check if position was closed
+            await promiseSleep(2000); // Adjust the sleep time as needed
+            const updatedPositionsResult = await restClientV2.getFuturesPositions({ productType, marginCoin: "USDT" });
+            const updatedPositions = updatedPositionsResult.data;
+
+            const remainingPosition = updatedPositions.find(p => p.symbol === symbol && p.holdSide === holdSide);
+            if (!remainingPosition) {
+              console.log(`Position successfully closed for ${symbol} on ${holdSide} side.`);
+              continue; // Skip to the next position if this one is closed
+            }
+          } catch (err) {
+            console.error(`Error closing position with limit order for ${symbol}:`, err.message);
+          }
+
+          // If position is still open, perform a flash close
+          try {
+            console.log(`Performing flash close for ${symbol} on ${holdSide} side.`);
+            const flashCloseResponse = await restClientV2.futuresFlashClosePositions({
+              symbol,
+              holdSide,
+              productType,
+            });
+            console.log(`Position flash closed for ${symbol} on ${holdSide} side.`, flashCloseResponse);
+          } catch (err) {
+            console.error(`Error performing flash close for ${symbol} on ${holdSide} side:`, err.message);
+          }
+        }
+      }
+    } else {
+      console.log('No open positions found.');
+    }
+  } catch (e) {
+    console.error('Error closing open positions:', e.message);
+    throw e; // Rethrow error to handle it in the parent function
+  }
+}
+
+// Function to manage trading assets
+async function manageTradingAssets(symbol) {
+  const productType = "USDT-FUTURES";
+  const marginCoin = "USDT";
+
+  try {
+    // Cancel all open orders
+    await cancelAllOrders(symbol, productType, marginCoin);
+
+    // Close all open positions
+    await closeOpenPositions(symbol, productType);
+
+    console.log('Successfully managed trading assets for', symbol);
+  } catch (e) {
+    console.error('Error managing trading assets:', e.message);
+    throw new Error('Failed to manage trading assets.');
+  }
 }
 
 // Function to place a trade with stop-loss and take-profit
@@ -167,9 +188,9 @@ async function placeTrade(symbol, price, size, side, leverage, presetTakeProfitP
     const result = await restClientV2.futuresSubmitOrder(order);
     console.log('Order result: ', result);
     return result;
-  } catch (error) {
-    console.error('Error placing order:', error.response ? error.response.data : error.message);
-    throw error;
+  } catch (e) {
+    console.error('Error placing order:', e.response ? e.response.data : e.message);
+    throw e;
   }
 }
 
@@ -198,8 +219,8 @@ app.post('/webhook', async (req, res) => {
     const result = await placeTrade(symbol, price, size, side, leverage, presetTakeProfitPrice, presetStopLossPrice);
 
     res.status(200).json(result);
-  } catch (error) {
-    console.error('Error placing order:', error.message);
+  } catch (e) {
+    console.error('Error placing order:', e.message);
     res.status(500).json({ error: 'Failed to place order' });
   }
 });
@@ -208,7 +229,7 @@ app.post('/webhook', async (req, res) => {
 (async () => {
   try {
     // Add event listeners to log websocket events on account
-    wsClient.on('update', handleWsUpdate);
+    wsClient.on('update', (data) => handleWsUpdate(data));
     wsClient.on('open', (data) => logWSEvent('open', data));
     wsClient.on('response', (data) => logWSEvent('response', data));
     wsClient.on('reconnect', (data) => logWSEvent('reconnect', data));
@@ -217,25 +238,26 @@ app.post('/webhook', async (req, res) => {
     wsClient.on('exception', (data) => logWSEvent('exception', data));
 
     // Subscribe to private account topics
-    const topics = [
-      'account', 'positions', 'trade', 'ticker',
-      'fill', 'orders', 'orders-algo', 'positions-history'
-    ];
-
-    for (const topic of topics) {
-      wsClient.subscribeTopic('USDT-FUTURES', topic);
-    }
+    wsClient.subscribeTopic('USDT-FUTURES', 'account');
+    wsClient.subscribeTopic('USDT-FUTURES', 'positions');
+    wsClient.subscribeTopic('USDT-FUTURES', 'trade');
+    wsClient.subscribeTopic('USDT-FUTURES', 'ticker');
+    wsClient.subscribeTopic('USDT-FUTURES', 'fill');
+    wsClient.subscribeTopic('USDT-FUTURES', 'orders');
+    wsClient.subscribeTopic('USDT-FUTURES', 'orders-algo');
+    wsClient.subscribeTopic('USDT-FUTURES', 'positions-history');
 
     // Wait briefly for ws to be ready
-    await sleep(2500);
+    await promiseSleep(2.5 * 1000);
 
     console.log('WebSocket client connected and subscribed to topics.');
-  } catch (error) {
-    console.error('Error setting up WebSocket client:', error);
+  } catch (e) {
+    console.error('Error setting up WebSocket client:', e);
   }
 })();
 
 // Start the Express server
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
