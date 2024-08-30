@@ -5,10 +5,10 @@ const {
   WebsocketClientV2,
   RestClientV2
 } = require('bitget-api');
-require('dotenv').config(); // Load environment variables
+require('dotenv').config();
 
 const app = express();
-app.use(express.json()); // Middleware to parse JSON bodies
+app.use(express.json());
 
 // Read from environmental variables
 const API_KEY = process.env.API_KEY;
@@ -56,10 +56,13 @@ async function manageTradingAssets(symbol) {
 
   try {
     // Close all open positions
-    await closeOpenPositions(symbol, productType);
+    await futuresFlashClosePositions(symbol, productType, holdSide);
 
+    // Cancel open orders
+    await futuresCancelOrder(symbol, orderId, productType, marginCoin);
+    
     // Cancel all open orders
-    await cancelAllOrders(symbol, productType, marginCoin);
+    await futuresCancelAllOrders(symbol, productType, marginCoin);
 
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
@@ -98,7 +101,7 @@ async function closeOpenPositions(symbol, productType) {
 // Function to cancel all orders
 async function cancelAllOrders(symbol, productType, marginCoin) {
   try {
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ productType, marginCoin });
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ symbol, productType, orderId, clientOid });
     const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
@@ -106,7 +109,9 @@ async function cancelAllOrders(symbol, productType, marginCoin) {
       for (const order of pendingOrders) {
         const cancelResponse = await restClientV2.futuresCancelOrder({
           symbol,
-          orderId: order.orderId, // Use the order ID to cancel specific orders
+          productType,
+          clientOid,
+          orderId: order.orderId,
         });
         console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
       }
@@ -136,9 +141,10 @@ async function handleWsUpdate(event) {
 
 // Function to place a trade with stop-loss and take-profit
 async function placeTrade(symbol, price, size, orderType, marginCoin, force, side, leverage, presetTakeProfitPrice, presetStopLossPrice) {
-  const productType = 'UMCBL'; // Use 'UMCBL' for USDT perpetual futures
-  const marginMode = 'isolated'; // Can be 'isolated' or 'crossed'
-  const tradeSide = 'open'; // 'open' for new positions, 'close' for closing positions
+  const productType = 'UMCBL';
+  const marginCoin = 'USDT';
+  const orderType = 'limit';
+  const force = 'gtc';
 
   try {
     // Set leverage
@@ -181,12 +187,11 @@ async function placeTrade(symbol, price, size, orderType, marginCoin, force, sid
 app.post('/webhook', async (req, res) => {
   const {
     symbol,
+    marginMode,
     price,
     size,
-    orderType,
-    marginCoin,
-    force,
     side,
+    tradeSide,
     leverage,
     presetTakeProfitPrice,
     presetStopLossPrice
