@@ -55,6 +55,10 @@ async function manageTradingAssets(symbol) {
   const marginCoin = "USDT";
 
   try {
+    // Example: Retrieve account assets
+    const accountAssets = await restClientV2.getFuturesAccountAssets({ productType });
+    console.log('Account assets:', accountAssets);
+
     // Close all open positions
     await closeOpenPositions(symbol, productType);
 
