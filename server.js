@@ -49,20 +49,17 @@ function roundDown(value, decimals) {
   );
 }
 
-// Function to manage open positions and orders
+// Function to close all open positions and cancel orders
 async function manageTradingAssets(symbol) {
   const productType = "USDT-FUTURES";
   const marginCoin = "USDT";
 
   try {
     // Close all open positions
-    await futuresFlashClosePositions(symbol, productType, holdSide);
+    await closeOpenPositions(symbol, productType);
 
-    // Cancel open orders
-    await futuresCancelOrder(symbol, orderId, productType, marginCoin);
-    
     // Cancel all open orders
-    await futuresCancelAllOrders(symbol, productType, marginCoin);
+    await cancelAllOrders(symbol, productType, marginCoin);
 
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
@@ -101,7 +98,7 @@ async function closeOpenPositions(symbol, productType) {
 // Function to cancel all orders
 async function cancelAllOrders(symbol, productType, marginCoin) {
   try {
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ symbol, productType, orderId, clientOid });
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ symbol, productType });
     const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
@@ -110,7 +107,7 @@ async function cancelAllOrders(symbol, productType, marginCoin) {
         const cancelResponse = await restClientV2.futuresCancelOrder({
           symbol,
           productType,
-          clientOid,
+          marginCoin,
           orderId: order.orderId,
         });
         console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
@@ -140,15 +137,15 @@ async function handleWsUpdate(event) {
 }
 
 // Function to place a trade with stop-loss and take-profit
-async function placeTrade(symbol, price, size, orderType, marginCoin, force, side, leverage, presetTakeProfitPrice, presetStopLossPrice) {
+async function placeTrade(symbol, price, size, side, leverage, presetTakeProfitPrice, presetStopLossPrice) {
   const productType = 'UMCBL';
   const marginCoin = 'USDT';
   const orderType = 'limit';
   const force = 'gtc';
+  const holdSide = side === 'buy' ? 'long' : 'short';
 
   try {
     // Set leverage
-    const holdSide = side === 'buy' ? 'long' : 'short';
     await restClientV2.setFuturesLeverage({
       symbol,
       productType,
@@ -161,12 +158,10 @@ async function placeTrade(symbol, price, size, orderType, marginCoin, force, sid
     const order = {
       symbol,
       productType,
-      marginMode,
       marginCoin,
       size,
       price,
       side,
-      tradeSide,
       orderType,
       force,
       presetTakeProfitPrice, // Added take-profit price
@@ -187,18 +182,16 @@ async function placeTrade(symbol, price, size, orderType, marginCoin, force, sid
 app.post('/webhook', async (req, res) => {
   const {
     symbol,
-    marginMode,
     price,
     size,
     side,
-    tradeSide,
     leverage,
     presetTakeProfitPrice,
     presetStopLossPrice
   } = req.body;
 
   // Validate request data
-  if (!symbol || !price || !size || !orderType || !marginCoin || !force || !side) {
+  if (!symbol || !price || !size || !side || !leverage) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
@@ -207,7 +200,7 @@ app.post('/webhook', async (req, res) => {
     await manageTradingAssets(symbol);
 
     // Place the trade
-    const result = await placeTrade(symbol, price, size, orderType, marginCoin, force, side, leverage, presetTakeProfitPrice, presetStopLossPrice);
+    const result = await placeTrade(symbol, price, size, side, leverage, presetTakeProfitPrice, presetStopLossPrice);
 
     res.status(200).json(result);
   } catch (e) {
