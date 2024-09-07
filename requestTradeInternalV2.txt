@@ -1,0 +1,42 @@
+OPEN LONG:
+
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "BTCUSDT",
+    "price": "50000",
+    "size": "0.001",
+    "orderType": "limit",
+    "marginCoin": "USDT",
+    "side": "buy",
+    "leverage": "10",
+    "presetTakeProfitPrice": "65000",
+    "presetStopLossPrice": "49000"
+  }'
+
+OPEN SHORT:
+
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "BTCUSDT",
+    "price": "62000",
+    "size": "0.001",
+    "orderType": "limit",
+    "marginCoin": "USDT",
+    "side": "sell",
+    "leverage": "10",
+    "presetTakeProfitPrice": "40000",
+    "presetStopLossPrice": "63000"
+  }'
+
+
+
+
+
+
+
+
+
+
+
