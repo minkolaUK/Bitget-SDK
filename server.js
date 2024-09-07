@@ -5,17 +5,17 @@ const {
   WebsocketClientV2,
   RestClientV2
 } = require('bitget-api');
-require('dotenv').config(); // Load environment variables
+require('dotenv').config();
 
 const app = express();
-app.use(express.json()); // Middleware to parse JSON bodies
+app.use(express.json());
 
-// Read from environment variables
+// Load environment variables
 const API_KEY = process.env.API_KEY;
 const API_SECRET = process.env.API_SECRET;
 const API_PASSPHRASE = process.env.API_PASSPHRASE;
 
-// Ensure API credentials are set
+// Check API credentials
 if (!API_KEY || !API_SECRET || !API_PASSPHRASE) {
   console.error('Missing API credentials. Please check your environment variables.');
   process.exit(1);
@@ -33,51 +33,60 @@ const restClientV2 = new RestClientV2({
   apiPass: API_PASSPHRASE,
 });
 
+// Helper to log WebSocket events
 function logWSEvent(type, data) {
   console.log(new Date(), `WS ${type} event:`, data);
 }
 
-// Simple sleep function
+// Simple sleep function for waiting
 function promiseSleep(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-// WARNING: for sensitive math you should be using a library such as decimal.js!
+// Helper function to round down values
 function roundDown(value, decimals) {
   return Number(
     Math.floor(parseFloat(value + 'e' + decimals)) + 'e-' + decimals
   );
 }
 
-// Function to manage open positions and orders
+// Manage trading assets by closing positions and canceling orders
 async function manageTradingAssets(symbol) {
   const productType = "USDT-FUTURES";
   const marginCoin = "USDT";
 
   try {
-    // Close all open positions
     await closeOpenPositions(symbol, productType);
-
-    // Cancel all open orders
     await cancelAllOrders(symbol, productType, marginCoin);
-
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
   }
 }
 
-// Function to close open positions
+// Function to fetch account assets
+async function getAccountAssets() {
+  try {
+    const accountAssets = await restClientV2.getFuturesAccountAsset({});
+    console.log('Account assets:', accountAssets.data);
+    return accountAssets.data;
+  } catch (e) {
+    console.error('Error fetching account assets:', e.message);
+    throw e;
+  }
+}
+
+// Close all open positions for a given symbol
 async function closeOpenPositions(symbol, productType) {
   try {
-    const positionsResult = await restClientV2.getFuturesPositions({ productType, marginCoin: "USDT" });
+    const positionsResult = await restClientV2.getFuturesPositions({ productType });
     const positions = positionsResult.data;
 
     if (positions.length > 0) {
       console.log('Open positions found. Closing all positions.');
       for (const position of positions) {
         if (position.symbol === symbol) {
-          const holdSide = position.holdSide; // Determine if the position is long or short
+          const holdSide = position.side === 'buy' ? 'short' : 'long';  // Opposite side to close
           const closeResponse = await restClientV2.futuresClosePositions({
             symbol,
             productType,
@@ -87,7 +96,6 @@ async function closeOpenPositions(symbol, productType) {
           if (closeResponse.code === 0) {
             console.log(`Position closed for ${symbol} on ${holdSide} side.`, closeResponse);
           } else {
-            // If unable to close, use flash close
             const flashCloseResponse = await restClientV2.futuresFlashClosePositions({
               symbol,
               productType,
@@ -102,22 +110,24 @@ async function closeOpenPositions(symbol, productType) {
     }
   } catch (e) {
     console.error('Error closing open positions:', e.message);
-    throw e; // Rethrow error to handle it in the parent function
+    throw e;
   }
 }
 
-// Function to cancel all orders
+// Cancel all open orders for a given symbol
 async function cancelAllOrders(symbol, productType, marginCoin) {
   try {
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ productType, marginCoin });
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders({ symbol, productType });
     const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
       console.log('Pending orders found. Canceling all pending orders.');
       for (const order of pendingOrders) {
+        // Optionally introduce a small delay to avoid rate limits
+        await promiseSleep(100); // 100ms delay between cancel requests
         const cancelResponse = await restClientV2.futuresCancelOrder({
           symbol,
-          orderId: order.orderId, // Use the order ID to cancel specific orders
+          orderId: order.orderId,
         });
         console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
       }
@@ -126,11 +136,11 @@ async function cancelAllOrders(symbol, productType, marginCoin) {
     }
   } catch (e) {
     console.error('Error canceling orders:', e.message);
-    throw e; // Rethrow error to handle it in the parent function
+    throw e;
   }
 }
 
-// WS event handler that uses type guards to narrow down event type
+// Handle WebSocket updates based on event type
 async function handleWsUpdate(event) {
   if (isWsFuturesAccountSnapshotEvent(event)) {
     console.log(new Date(), 'ws update (account balance):', event);
@@ -142,17 +152,16 @@ async function handleWsUpdate(event) {
     return;
   }
 
+  // Log any unhandled events for debugging
   logWSEvent('update (unhandled)', event);
 }
 
 // Function to place a trade with stop-loss and take-profit
-async function placeTrade(symbol, price, size, orderType, marginMode, marginCoin, force, side, leverage, presetTakeProfitPrice, presetStopLossPrice) {
+async function placeTrade(symbol, price, size, orderType, marginCoin, side, leverage, presetTakeProfitPrice, presetStopLossPrice) {
   const productType = 'UMCBL'; // Use 'UMCBL' for USDT perpetual futures
+  const marginMode = 'isolated'; // Ensure marginMode is correctly defined
   const tradeSide = 'open'; // 'open' for new positions, 'close' for closing positions
-
-  if (isNaN(leverage) || leverage <= 0) {
-    throw new Error('Invalid leverage value. It must be a positive number.');
-  }
+  const force = 'gtc'; // Default force, can be 'ioc', 'fok', etc.
 
   try {
     // Set leverage
@@ -177,8 +186,8 @@ async function placeTrade(symbol, price, size, orderType, marginMode, marginCoin
       tradeSide,
       orderType,
       force,
-      presetTakeProfitPrice, // Added take-profit price
-      presetStopLossPrice   // Added stop-loss price
+      presetTakeProfitPrice, 
+      presetStopLossPrice   
     };
 
     console.log('Placing order: ', order);
@@ -186,7 +195,7 @@ async function placeTrade(symbol, price, size, orderType, marginMode, marginCoin
     console.log('Order result: ', result);
     return result;
   } catch (e) {
-    console.error('Error placing order:', e.response ? e.response.data : e.message);
+    console.error('Error placing order:', e.message);
     throw e;
   }
 }
@@ -198,19 +207,15 @@ app.post('/webhook', async (req, res) => {
     price,
     size,
     orderType,
-    marginMode = 'isolated', // Default to 'isolated'
+    marginCoin,
     side,
     leverage,
     presetTakeProfitPrice,
     presetStopLossPrice
   } = req.body;
 
-  // Default values
-  const marginCoin = 'USDT'; // Default margin coin
-  const force = 'gtc';       // Default order force
-
   // Validate request data
-  if (!symbol || !price || !size || !orderType || !marginMode || !side) {
+  if (!symbol || !price || !size || !orderType || !marginCoin || !side) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
@@ -219,19 +224,7 @@ app.post('/webhook', async (req, res) => {
     await manageTradingAssets(symbol);
 
     // Place the trade
-    const result = await placeTrade(
-      symbol,
-      price,
-      size,
-      orderType,
-      marginMode,        
-      marginCoin,        
-      force,        
-      side,
-      leverage,
-      presetTakeProfitPrice,
-      presetStopLossPrice
-    );
+    const result = await placeTrade(symbol, price, size, orderType, marginCoin, side, leverage, presetTakeProfitPrice, presetStopLossPrice);
 
     res.status(200).json(result);
   } catch (e) {
@@ -243,8 +236,8 @@ app.post('/webhook', async (req, res) => {
 // Start WebSocket client and handle events
 (async () => {
   try {
-    // Add event listeners to log websocket events on account
-    wsClient.on('update', (data) => handleWsUpdate(data));
+    // Add event listeners to log websocket events
+    wsClient.on('update', handleWsUpdate);
     wsClient.on('open', (data) => logWSEvent('open', data));
     wsClient.on('response', (data) => logWSEvent('response', data));
     wsClient.on('reconnect', (data) => logWSEvent('reconnect', data));
@@ -252,7 +245,7 @@ app.post('/webhook', async (req, res) => {
     wsClient.on('authenticated', (data) => logWSEvent('authenticated', data));
     wsClient.on('exception', (data) => logWSEvent('exception', data));
 
-    // Subscribe to private account topics
+    // Subscribe to WebSocket topics
     wsClient.subscribeTopic('USDT-FUTURES', 'account');
     wsClient.subscribeTopic('USDT-FUTURES', 'positions');
     wsClient.subscribeTopic('USDT-FUTURES', 'trade');
@@ -260,19 +253,14 @@ app.post('/webhook', async (req, res) => {
     wsClient.subscribeTopic('USDT-FUTURES', 'fill');
     wsClient.subscribeTopic('USDT-FUTURES', 'orders');
     wsClient.subscribeTopic('USDT-FUTURES', 'orders-algo');
-    wsClient.subscribeTopic('USDT-FUTURES', 'positions-history');
-
-    // Wait briefly for ws to be ready
-    await promiseSleep(2.5 * 1000);
-
-    console.log('WebSocket client connected and subscribed to topics.');
+    wsClient.subscribeTopic('USDT-FUTURES', 'liquidation');
   } catch (e) {
-    console.error('Error setting up WebSocket client:', e);
+    console.error('WebSocket client error:', e.message);
   }
 })();
 
 // Start the Express server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
