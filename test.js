@@ -43,7 +43,7 @@ function promiseSleep(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-// Manage trading assets by closing positions and canceling orders
+// Main function to manage trading assets by closing positions and canceling orders
 async function manageTradingAssets(symbol) {
   const productType = "USDT-FUTURES";
   const marginCoin = "USDT";
