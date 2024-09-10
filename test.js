@@ -15,7 +15,6 @@ const API_KEY = process.env.API_KEY;
 const API_SECRET = process.env.API_SECRET;
 const API_PASSPHRASE = process.env.API_PASSPHRASE;
 
-// Check API credentials
 if (!API_KEY || !API_SECRET || !API_PASSPHRASE) {
   console.error('Missing API credentials. Please check your environment variables.');
   process.exit(1);
@@ -43,86 +42,59 @@ function promiseSleep(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-// Main function to manage trading assets by closing positions and canceling orders
+// Manage trading assets by closing positions and canceling orders
 async function manageTradingAssets(symbol) {
-  const productType = "USDT-FUTURES";
+  const productType = "UMCBL";
   const marginCoin = "USDT";
 
   try {
-    // Close all open positions for the symbol
-    await closeOpenPositions(symbol, productType);
-
-    // Cancel all orders for the symbol
-    await futuresCancelAllOrders(symbol, productType, marginCoin);
+    await futuresClosePosition(symbol, productType);
+    await futuresCancelOrder(symbol, productType, marginCoin);
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
   }
 }
 
-// Function to fetch and log all open positions
-async function getFuturesPositions(productType, marginCoin) {
+// Function to fetch account assets
+async function getAccountAssets() {
   try {
-    console.log(`Fetching futures positions with productType=${productType} and marginCoin=${marginCoin}`);
-    const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
-    const positions = positionsResult.data;
-
-    if (positions.length > 0) {
-      console.log('Open positions:');
-      positions.forEach(position => {
-        console.log(`Symbol: ${position.symbol}, Side: ${position.side}, Size: ${position.size}`);
-      });
-    } else {
-      console.log('No open positions found.');
-    }
+    const accountAssets = await restClientV2.getFuturesAccountAsset({});
+    console.log('Account assets:', accountAssets.data);
+    return accountAssets.data;
   } catch (e) {
-    console.error('Error fetching open positions:', e.message);
-    throw e;
-  }
-}
-
-// Function to fetch and log all open orders
-async function getFuturesOpenOrders(symbol, productType) {
-  try {
-    console.log(`Fetching open orders for symbol=${symbol} and productType=${productType}`);
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
-    const pendingOrders = pendingOrdersResult.data;
-
-    if (pendingOrders.length > 0) {
-      console.log('Open orders:');
-      pendingOrders.forEach(order => {
-        console.log(`Symbol: ${order.symbol}, OrderId: ${order.orderId}, Side: ${order.side}, Price: ${order.price}, Size: ${order.size}`);
-      });
-    } else {
-      console.log('No open orders found.');
-    }
-  } catch (e) {
-    console.error('Error fetching open orders:', e.message);
+    console.error('Error fetching account assets:', e.message);
     throw e;
   }
 }
 
 // Close all open positions for a given symbol
-async function closeOpenPositions(symbol, productType) {
+async function futuresClosePosition(symbol) {
   try {
-    const positionsResult = await restClientV2.getFuturesPositions(productType, 'USDT');
+    // Fetch open positions
+    const productType = "UMCBL";
+    const positionsResult = await restClientV2.getFuturesPositions(productType);
     const positions = positionsResult.data;
 
     if (positions.length > 0) {
       console.log('Open positions found. Closing all positions.');
       for (const position of positions) {
-        if (position.symbol === symbol) {
-          const holdSide = position.side === 'buy' ? 'long' : 'short'; // Assuming 'buy' is long and 'sell' is short
-          const closeResponse = await restClientV2.futuresFlashClosePositions({
+        if (position.instId === symbol) {
+          const side = position.holdSide === 'long' ? 'sell' : 'buy'; // Convert holdSide to API side
+          const size = position.marginSize; // Ensure size is correct
+
+          // Close the position
+          const closeResponse = await restClientV2.futuresClosePosition({
             symbol,
-            holdSide,
+            side, // Use 'buy' for closing long, 'sell' for closing short
+            size, // Size to close
             productType,
           });
 
-          if (closeResponse.code === '00000') {
-            console.log(`Position closed for ${symbol} on ${holdSide}.`, closeResponse);
+          if (closeResponse.code === 0) {
+            console.log(`Position closed for ${symbol} on ${side} side.`, closeResponse);
           } else {
-            console.error(`Error closing position for ${symbol}.`, closeResponse);
+            console.error(`Failed to close position for ${symbol}. Response:`, closeResponse);
           }
         }
       }
@@ -136,33 +108,26 @@ async function closeOpenPositions(symbol, productType) {
 }
 
 // Cancel all open orders for a given symbol
-async function futuresCancelAllOrders(symbol, productType, marginCoin) {
+async function futuresCancelOrder(symbol) {
   try {
-    const cancelResponse = await restClientV2.futuresCancelAllOrders(symbol, productType, marginCoin);
+    const marginCoin = "USDT";
+    const productType = "UMCBL";
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
+    const pendingOrders = pendingOrdersResult.data;
 
-    if (cancelResponse.code === '00000') {
-      console.log('All pending orders canceled successfully.', cancelResponse.data);
+    if (pendingOrders.length > 0) {
+      console.log('Pending orders found. Canceling all pending orders.');
+      for (const order of pendingOrders) {
+        // Optionally introduce a small delay to avoid rate limits
+        await promiseSleep(100); // 100ms delay between cancel requests
+        const cancelResponse = await restClientV2.futuresCancelOrder(symbol, productType, marginCoin, order.orderId);
+        console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
+      }
     } else {
-      console.error('Error canceling all orders:', cancelResponse.msg);
+      console.log('No pending orders found.');
     }
   } catch (e) {
     console.error('Error canceling orders:', e.message);
-    throw e;
-  }
-}
-
-// Cancel a specific order
-async function futuresCancelOrder(symbol, productType, marginCoin, orderId, clientOid) {
-  try {
-    const cancelResponse = await restClientV2.futuresCancelOrder(symbol, productType, marginCoin, orderId, clientOid);
-
-    if (cancelResponse.code === '00000') {
-      console.log(`Order ${orderId || clientOid} canceled successfully.`, cancelResponse.data);
-    } else {
-      console.error('Error canceling order:', cancelResponse.msg);
-    }
-  } catch (e) {
-    console.error('Error canceling order:', e.message);
     throw e;
   }
 }
@@ -259,33 +224,59 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Perform startup checks to log current positions and orders
+// Startup check function to fetch and report positions and orders
 async function startupCheck(symbol = 'BTCUSDT') {
-  const productType = 'USDT-FUTURES';
+  const productType = 'UMCBL';
   const marginCoin = 'USDT';
 
   try {
     console.log('Starting up...');
-    
-    // Fetch and log open positions
-    await getFuturesPositions(productType, marginCoin);
-    
-    // Fetch and log open orders for the specified symbol
-    await getFuturesOpenOrders(symbol, productType);
+
+    // Get and log all positions
+    const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
+    console.log('Current positions:', positionsResult.data);
+
+    // Get and log individual position details
+    const positionResult = await restClientV2.getFuturesPosition(productType, symbol, marginCoin);
+    console.log('Position details for', symbol, ':', positionResult.data);
+
+    // Get and log all open orders
+    const openOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
+    console.log('Current open orders:', openOrdersResult.data);
+
   } catch (e) {
     console.error('Error during startup check:', e.message);
   }
 }
 
-// Start WebSocket connection and perform startup checks
-wsClient.connect();
-startupCheck();
+// Start WebSocket client and handle events
+(async () => {
+  try {
+    wsClient.on('update', handleWsUpdate);
+    wsClient.on('open', (data) => logWSEvent('open', data));
+    wsClient.on('response', (data) => logWSEvent('response', data));
+    wsClient.on('reconnect', (data) => logWSEvent('reconnect', data));
+    wsClient.on('reconnected', (data) => logWSEvent('reconnected', data));
+    wsClient.on('authenticated', (data) => logWSEvent('authenticated', data));
+    wsClient.on('exception', (data) => logWSEvent('exception', data));
 
-// Set up WebSocket event handlers
-wsClient.on('update', handleWsUpdate);
+    wsClient.subscribeTopic('USDT-FUTURES', 'account');
+    wsClient.subscribeTopic('USDT-FUTURES', 'positions');
+    wsClient.subscribeTopic('USDT-FUTURES', 'trade');
+    wsClient.subscribeTopic('USDT-FUTURES', 'ticker');
+    wsClient.subscribeTopic('USDT-FUTURES', 'fill');
+    wsClient.subscribeTopic('USDT-FUTURES', 'orders');
+    wsClient.subscribeTopic('USDT-FUTURES', 'orders-algo');
+    wsClient.subscribeTopic('USDT-FUTURES', 'liquidation');
 
-// Start the Express server
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
+    const port = process.env.PORT || 3000;
+    app.listen(port, () => {
+      console.log(`Server is running on port ${port}`);
+    });
+
+    // Perform startup checks
+    startupCheck();
+  } catch (e) {
+    console.error('WebSocket client error:', e.message);
+  }
+})();
