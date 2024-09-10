@@ -43,13 +43,13 @@ function promiseSleep(milliseconds) {
 }
 
 // Manage trading assets by closing positions and canceling orders
-async function manageTradingAssets(symbol) {
+async function manageTradingAssets(symbol, holdSide, orderId, clientOid) {
   const productType = "UMCBL";
   const marginCoin = "USDT";
 
   try {
-    await futuresClosePosition(symbol, productType);
-    await futuresCancelOrder(symbol, productType, marginCoin);
+    await futuresClosePosition(symbol, holdSide, productType);
+    await futuresCancelOrder(symbol, productType, marginCoin, orderId, clientOid);
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
@@ -69,30 +69,24 @@ async function getAccountAssets() {
 }
 
 // Close all open positions for a given symbol
-async function futuresClosePosition(symbol) {
+async function futuresClosePosition(symbol, holdSide, productType) {
   try {
-    // Fetch open positions
-    const productType = "UMCBL";
-    const positionsResult = await restClientV2.getFuturesPositions(productType);
+    const marginCoin = "USDT";
+    const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
     const positions = positionsResult.data;
 
     if (positions.length > 0) {
       console.log('Open positions found. Closing all positions.');
       for (const position of positions) {
         if (position.instId === symbol) {
-          const side = position.holdSide === 'long' ? 'sell' : 'buy'; // Convert holdSide to API side
-          const size = position.marginSize; // Ensure size is correct
-
-          // Close the position
-          const closeResponse = await restClientV2.futuresClosePosition({
+          const closeResponse = await restClientV2.futuresFlashClosePositions({
             symbol,
-            side, // Use 'buy' for closing long, 'sell' for closing short
-            size, // Size to close
+            holdSide,
             productType,
           });
 
           if (closeResponse.code === 0) {
-            console.log(`Position closed for ${symbol} on ${side} side.`, closeResponse);
+            console.log(`Position closed for ${symbol} on ${holdSide}.`, closeResponse);
           } else {
             console.error(`Failed to close position for ${symbol}. Response:`, closeResponse);
           }
@@ -108,17 +102,14 @@ async function futuresClosePosition(symbol) {
 }
 
 // Cancel all open orders for a given symbol
-async function futuresCancelOrder(symbol) {
+async function futuresCancelOrder(symbol, productType, marginCoin, orderId, clientOid) {
   try {
-    const marginCoin = "USDT";
-    const productType = "UMCBL";
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
+    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType, clientOid, orderId);
     const pendingOrders = pendingOrdersResult.data;
 
     if (pendingOrders.length > 0) {
       console.log('Pending orders found. Canceling all pending orders.');
       for (const order of pendingOrders) {
-        // Optionally introduce a small delay to avoid rate limits
         await promiseSleep(100); // 100ms delay between cancel requests
         const cancelResponse = await restClientV2.futuresCancelOrder(symbol, productType, marginCoin, order.orderId);
         console.log(`Pending order canceled for ${symbol}.`, cancelResponse);
@@ -232,16 +223,20 @@ async function startupCheck(symbol = 'BTCUSDT') {
   try {
     console.log('Starting up...');
 
-    // Get and log all positions
+    // Get position
+    const positionResult = await restClientV2.getFuturesPosition(productType, symbol, marginCoin);
+    console.log('Position details for', symbol, ':', positionResult.data);
+    
+    // Get positions
     const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
     console.log('Current positions:', positionsResult.data);
 
-    // Get and log individual position details
-    const positionResult = await restClientV2.getFuturesPosition(productType, symbol, marginCoin);
-    console.log('Position details for', symbol, ':', positionResult.data);
-
-    // Get and log all open orders
-    const openOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
+    // Get open orders details
+    const openOrdersDetailsResult = await restClientV2.getFuturesOrder(symbol, productType, clientOid);
+    console.log('Current open orders:', openOrdersDetailsResult.data);
+    
+    // Get open orders
+    const openOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType, clientOid);
     console.log('Current open orders:', openOrdersResult.data);
 
   } catch (e) {
