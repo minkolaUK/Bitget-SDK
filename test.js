@@ -44,7 +44,10 @@ function roundDown(value, decimals) {
 }
 
 // Get positions and orders for a symbol
-async function getOrdersAndPositions(symbol, productType, marginCoin) {
+async function getOrdersAndPositions(symbol) {
+  const productType = 'USDT-FUTURES';
+  const marginCoin = 'USDT';
+
   try {
     // Fetch open positions
     const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
@@ -75,19 +78,22 @@ async function getOrdersAndPositions(symbol, productType, marginCoin) {
     }
 
   } catch (e) {
-    console.error('Error fetching open positions or orders:', e.message);
+    console.error('Error fetching open positions or orders:', e.response ? e.response.data : e.message);
     throw e;
   }
 }
 
 // Flash close open positions
-async function flashClosePositions(symbol, productType, holdSide) {
+async function flashClosePositions(symbol, holdSide) {
+  const productType = 'USDT-FUTURES';
+
   try {
-    const closeResponse = await restClientV2.flashClosePositions({
+    const closeResponse = await restClientV2.futuresFlashClosePositions({
       symbol,
-      productType,
-      holdSide
+      holdSide,
+      productType
     });
+
     console.log('Flash Close Positions Response:', closeResponse);
 
     if (closeResponse.code === '00000') {
@@ -102,8 +108,12 @@ async function flashClosePositions(symbol, productType, holdSide) {
 }
 
 // Cancel all open orders for a given symbol
-async function futuresCancelOrder(symbol, productType, marginCoin) {
+async function cancelAllOpenOrders(symbol) {
+  const productType = 'USDT-FUTURES';
+  const marginCoin = 'USDT';
+
   try {
+    // Fetch open orders
     const pendingOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
     console.log('Pending Orders Result:', pendingOrdersResult);
     const pendingOrders = pendingOrdersResult.data;
@@ -112,7 +122,12 @@ async function futuresCancelOrder(symbol, productType, marginCoin) {
       console.log('Pending orders found. Canceling all pending orders.');
       for (const order of pendingOrders) {
         await promiseSleep(100); // Optional small delay between cancel requests
-        const cancelResponse = await restClientV2.futuresCancelOrder(symbol, productType, marginCoin, order.orderId);
+        const cancelResponse = await restClientV2.futuresCancelOrder({
+          symbol,
+          productType,
+          marginCoin,
+          orderId: order.orderId
+        });
         console.log('Cancel Order Response:', cancelResponse);
       }
     } else {
@@ -126,7 +141,7 @@ async function futuresCancelOrder(symbol, productType, marginCoin) {
 
 // Manage trading assets by closing positions and canceling orders
 async function manageTradingAssets(symbol) {
-  const productType = 'UMCBL';
+  const productType = 'USDT-FUTURES';
   const marginCoin = 'USDT';
 
   try {
@@ -141,8 +156,8 @@ async function manageTradingAssets(symbol) {
       holdSide = 'short';
     }
     
-    await flashClosePositions(symbol, productType, holdSide);
-    await futuresCancelOrder(symbol, productType, marginCoin);
+    await flashClosePositions(symbol, holdSide);
+    await cancelAllOpenOrders(symbol);
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
@@ -241,7 +256,7 @@ async function startupCheck() {
 
   for (const symbol of symbols) {
     try {
-      await getOrdersAndPositions(symbol, 'UMCBL', 'USDT');
+      await getOrdersAndPositions(symbol);
     } catch (e) {
       console.error(`Startup check failed for ${symbol}:`, e.message);
     }
@@ -280,7 +295,7 @@ async function fetchAvailableSymbols() {
       console.log(`Server is running on port ${port}`);
     });
 
-    // Perform startup checks
+    // Perform startup checks after subscribing to WebSocket topics
     await startupCheck();
   } catch (e) {
     console.error('WebSocket client error:', e.message);
