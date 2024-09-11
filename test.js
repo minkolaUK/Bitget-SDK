@@ -33,14 +33,21 @@ const restClientV2 = new RestClientV2({
   apiPass: API_PASSPHRASE,
 });
 
+// Helper to log WebSocket events
+function logWSEvent(type, data) {
+  console.log(new Date(), `WS ${type} event:`, data);
+}
+
 // Simple sleep function for waiting
 function promiseSleep(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-// Function to round down values
+// Helper function to round down values
 function roundDown(value, decimals) {
-  return Number(Math.floor(parseFloat(value + 'e' + decimals)) + 'e-' + decimals);
+  return Number(
+    Math.floor(parseFloat(value + 'e' + decimals)) + 'e-' + decimals
+  );
 }
 
 // Get positions and orders for a symbol
@@ -85,7 +92,7 @@ async function getOrdersAndPositions(symbol) {
 
 // Flash close open positions
 async function flashClosePositions(symbol, holdSide) {
-  const productType = 'USDT-FUTURES';
+  const productType = 'UMCBL';
 
   try {
     const closeResponse = await restClientV2.futuresFlashClosePositions({
@@ -109,7 +116,7 @@ async function flashClosePositions(symbol, holdSide) {
 
 // Cancel all open orders for a given symbol
 async function cancelAllOpenOrders(symbol) {
-  const productType = 'USDT-FUTURES';
+  const productType = 'UMCBL';
   const marginCoin = 'USDT';
 
   try {
@@ -141,7 +148,7 @@ async function cancelAllOpenOrders(symbol) {
 
 // Manage trading assets by closing positions and canceling orders
 async function manageTradingAssets(symbol) {
-  const productType = 'USDT-FUTURES';
+  const productType = 'UMCBL';
   const marginCoin = 'USDT';
 
   try {
@@ -162,6 +169,22 @@ async function manageTradingAssets(symbol) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
   }
+}
+
+// Handle WebSocket updates based on event type
+async function handleWsUpdate(event) {
+  if (isWsFuturesAccountSnapshotEvent(event)) {
+    console.log(new Date(), 'ws update (account balance):', event);
+    return;
+  }
+
+  if (isWsFuturesPositionsSnapshotEvent(event)) {
+    console.log(new Date(), 'ws update (positions):', event);
+    return;
+  }
+
+  // Log any unhandled events for debugging
+  logWSEvent('update (unhandled)', event);
 }
 
 // Function to place a trade with stop-loss and take-profit
@@ -241,18 +264,9 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// WebSocket event handlers
-function handleWsUpdate(data) {
-  console.log('WebSocket update:', data);
-}
-
-function logWSEvent(eventType, data) {
-  console.log(`WebSocket event [${eventType}]:`, data);
-}
-
 // Startup check to retrieve initial orders and positions
 async function startupCheck() {
-  const symbols = await fetchAvailableSymbols(); // Fetch or define available symbols
+  const symbols = await fetchAvailableSymbols();
 
   for (const symbol of symbols) {
     try {
@@ -265,26 +279,30 @@ async function startupCheck() {
 
 // Example function to fetch available symbols
 async function fetchAvailableSymbols() {
-  // Example static list; replace with dynamic fetch as needed
-  return ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
+  try {
+    const response = await restClientV2.getFuturesTraderSymbolSettings();
+    return response.data.map(symbolInfo => symbolInfo.symbol);
+  } catch (e) {
+    console.error('Failed to fetch symbols:', e.message);
+    return [];
+  }
 }
 
 async function postLongOrderEntry() {
-  tradeDirection = 'long';
+  const tradeDirection = 'long';
+  const size = 1;  // Adjust size accordingly
 
   await getAccountBalance();
-  await createOrder('long', size) // direction, positionSize
+  await createOrder(tradeDirection, size); // direction, positionSize
 };
-
-// setTimeout(postLongOrderEntry, 5000);
 
 async function postShortOrderEntry() {
-  tradeDirection = 'short';
+  const tradeDirection = 'short';
+  const size = 1;  // Adjust size accordingly
 
   await getAccountBalance();
-  await createOrder('short', size)  // direction, positionSize
+  await createOrder(tradeDirection, size);  // direction, positionSize
 };
-// setTimeout(postShortOrderEntry, 5000);
 
 // Start WebSocket client and handle events
 (async () => {
