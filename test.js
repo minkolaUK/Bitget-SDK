@@ -45,7 +45,7 @@ function roundDown(value, decimals) {
 
 // Get positions and orders for a symbol
 async function getOrdersAndPositions(symbol) {
-  const productType = 'USDT-FUTURES';
+  const productType = 'UMCBL';
   const marginCoin = 'USDT';
 
   try {
@@ -268,6 +268,23 @@ async function fetchAvailableSymbols() {
   // Example static list; replace with dynamic fetch as needed
   return ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
 }
+
+async function postLongOrderEntry() {
+  tradeDirection = 'long';
+
+  await getAccountBalance();
+  await createOrder('long', size) // direction, positionSize
+};
+
+// setTimeout(postLongOrderEntry, 5000);
+
+async function postShortOrderEntry() {
+  tradeDirection = 'short';
+
+  await getAccountBalance();
+  await createOrder('short', size)  // direction, positionSize
+};
+// setTimeout(postShortOrderEntry, 5000);
 
 // Start WebSocket client and handle events
 (async () => {
