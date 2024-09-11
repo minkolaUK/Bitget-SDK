@@ -148,23 +148,35 @@ async function cancelAllOpenOrders(symbol) {
 
 // Manage trading assets by closing positions and canceling orders
 async function manageTradingAssets(symbol) {
-  const productType = 'UMCBL';
-  const marginCoin = 'USDT';
+  const productType = 'UMCBL'; // Define the product type for Bitget futures
+  const marginCoin = 'USDT';   // Define the margin coin
 
   try {
-    // Determine position direction for flash close
+    // Retrieve current positions
     const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
     const positions = positionsResult.data;
-    
+
     let holdSide = '';
+
+    // Determine the hold side based on existing positions
     if (positions.some(pos => pos.symbol === symbol && pos.side === 'long')) {
       holdSide = 'long';
     } else if (positions.some(pos => pos.symbol === symbol && pos.side === 'short')) {
       holdSide = 'short';
     }
-    
-    await flashClosePositions(symbol, holdSide);
+
+    // Close positions if any are open
+    if (holdSide) {
+      console.log(`Closing ${holdSide} positions for ${symbol}.`);
+      await flashClosePositions(symbol, holdSide);
+    } else {
+      console.log(`No positions to close for ${symbol}.`);
+    }
+
+    // Cancel all open orders
+    console.log(`Canceling all open orders for ${symbol}.`);
     await cancelAllOpenOrders(symbol);
+
   } catch (e) {
     console.error('Error managing trading assets:', e.message);
     throw new Error('Failed to manage trading assets.');
