@@ -17,7 +17,7 @@ const API_PASSPHRASE = process.env.API_PASSPHRASE;
 
 // Check API credentials
 if (!API_KEY || !API_SECRET || !API_PASSPHRASE) {
-  console.error('Missing API credentials. Please check your environment variables.');
+  console.error('Missing API credentials.');
   process.exit(1);
 }
 
@@ -52,7 +52,7 @@ function roundDown(value, decimals) {
 
 // Get positions and orders for a symbol
 async function getOrdersAndPositions(symbol) {
-  const productType = 'UMCBL';
+  const productType = 'USDT-FUTURES';
   const marginCoin = 'USDT';
 
   try {
@@ -90,33 +90,9 @@ async function getOrdersAndPositions(symbol) {
   }
 }
 
-// Flash close open positions
-async function flashClosePositions(symbol, holdSide) {
-  const productType = 'UMCBL';
-
-  try {
-    const closeResponse = await restClientV2.futuresFlashClosePositions({
-      symbol,
-      holdSide,
-      productType
-    });
-
-    console.log('Flash Close Positions Response:', closeResponse);
-
-    if (closeResponse.code === '00000') {
-      console.log(`Positions closed for ${symbol} on ${holdSide} side.`);
-    } else {
-      console.error(`Failed to close positions for ${symbol}. Response:`, closeResponse);
-    }
-  } catch (e) {
-    console.error('Error closing positions:', e.message);
-    throw e;
-  }
-}
-
 // Cancel all open orders for a given symbol
 async function cancelAllOpenOrders(symbol) {
-  const productType = 'UMCBL';
+  const productType = 'USDT-FUTURES';
   const marginCoin = 'USDT';
 
   try {
@@ -148,7 +124,7 @@ async function cancelAllOpenOrders(symbol) {
 
 // Manage trading assets by closing positions and canceling orders
 async function manageTradingAssets(symbol) {
-  const productType = 'UMCBL'; // Define the product type for Bitget futures
+  const productType = 'USDT-FUTURES'; // Define the product type for Bitget futures
   const marginCoin = 'USDT';   // Define the margin coin
 
   try {
@@ -168,7 +144,7 @@ async function manageTradingAssets(symbol) {
     // Close positions if any are open
     if (holdSide) {
       console.log(`Closing ${holdSide} positions for ${symbol}.`);
-      await flashClosePositions(symbol, holdSide);
+      await restClientV2.flashClosePositions(symbol, holdSide, productType);
     } else {
       console.log(`No positions to close for ${symbol}.`);
     }
@@ -276,45 +252,21 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Startup check to retrieve initial orders and positions
 async function startupCheck() {
-  const symbols = await fetchAvailableSymbols();
+  const symbol = 'BTCUSDT'; // Specify symbol or fetch from a list as needed
 
-  for (const symbol of symbols) {
-    try {
-      await getOrdersAndPositions(symbol);
-    } catch (e) {
-      console.error(`Startup check failed for ${symbol}:`, e.message);
-    }
-  }
-}
-
-// Example function to fetch available symbols
-async function fetchAvailableSymbols() {
   try {
-    const response = await restClientV2.getFuturesTraderSymbolSettings();
-    return response.data.map(symbolInfo => symbolInfo.symbol);
+    await getOrdersAndPositions(symbol); // Display positions and orders for a specific symbol
   } catch (e) {
-    console.error('Failed to fetch symbols:', e.message);
-    return [];
+    console.error(`Startup check failed for ${symbol}:`, e.message);
+  }
+
+  try {
+    await restClientV2.getBalances(); // Fetch and display account assets
+  } catch (e) {
+    console.error('Failed to fetch account assets during startup:', e.message);
   }
 }
-
-async function postLongOrderEntry() {
-  const tradeDirection = 'long';
-  const size = 1;  // Adjust size accordingly
-
-  await getAccountBalance();
-  await createOrder(tradeDirection, size); // direction, positionSize
-};
-
-async function postShortOrderEntry() {
-  const tradeDirection = 'short';
-  const size = 1;  // Adjust size accordingly
-
-  await getAccountBalance();
-  await createOrder(tradeDirection, size);  // direction, positionSize
-};
 
 // Start WebSocket client and handle events
 (async () => {
