@@ -1,10 +1,5 @@
 const express = require('express');
-const {
-  isWsFuturesAccountSnapshotEvent,
-  isWsFuturesPositionsSnapshotEvent,
-  WebsocketClientV2,
-  RestClientV2
-} = require('bitget-api');
+const { WebsocketClientV2, RestClientV2 } = require('bitget-api');
 require('dotenv').config();
 
 const app = express();
@@ -33,186 +28,95 @@ const restClientV2 = new RestClientV2({
   apiPass: API_PASSPHRASE,
 });
 
-// Simple sleep function for waiting
-function promiseSleep(milliseconds) {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
-
-// Function to round down values
-function roundDown(value, decimals) {
-  return Number(Math.floor(parseFloat(value + 'e' + decimals)) + 'e-' + decimals);
-}
-
-// Get positions and orders for a symbol
-async function getOrdersAndPositions(symbol) {
-  const productType = 'UMCBL';
-  const marginCoin = 'USDT';
-
+// Get open positions for a specific product type and margin coin
+async function getAllPositions(productType, marginCoin) {
   try {
-    // Fetch open positions
-    const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
-    console.log('Positions Result:', positionsResult);
-    const positions = positionsResult.data;
-
-    // Check for open positions
+    console.log(`Requesting all positions for productType: ${productType}, marginCoin: ${marginCoin}`);
+    
+    const positionResult = await restClientV2.getFuturesPositions(productType, marginCoin);
+    
+    if (!positionResult || positionResult.code !== 200) {
+      console.error('No position data returned from API:', positionResult.msg);
+      return [];
+    }
+    
+    console.log('All Positions API Response:', positionResult);
+    
+    const positions = positionResult.data;
     console.log('Open positions:', positions.length > 0 ? positions : 'None');
+    
+    return positions;
+  } catch (e) {
+    handleError(e, 'fetching all positions');
+    return [];
+  }
+}
 
-    // Fetch open orders
+// Get open orders for a specific symbol and product type
+async function getOpenOrders(symbol, productType) {
+  try {
+    console.log(`Requesting open orders for symbol: ${symbol}, productType: ${productType}`);
+
     const openOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
-    console.log('Open Orders Result:', openOrdersResult);
+    
+    if (!openOrdersResult || openOrdersResult.code !== 200) {
+      console.error('No open order data returned from API:', openOrdersResult.msg);
+      return [];
+    }
+    
+    console.log('Open Orders API Response:', openOrdersResult);
+
     const openOrders = openOrdersResult.data;
-
-    // Check for open orders
     console.log('Open orders:', openOrders.length > 0 ? openOrders : 'None');
-
-    // Optionally, get details for each open order
-    for (const order of openOrders) {
-      const orderDetail = await restClientV2.getFuturesOrder(symbol, productType, order.orderId, order.clientOid);
-      console.log('Order Detail:', orderDetail);
-    }
-
-    // Optionally, get fills for each order
-    for (const order of openOrders) {
-      const fills = await restClientV2.getFuturesFills(order.orderId, symbol, productType);
-      console.log('Fills for Order:', fills);
-    }
-
-  } catch (e) {
-    console.error('Error fetching open positions or orders:', e.response ? e.response.data : e.message);
-    throw e;
-  }
-}
-
-// Flash close open positions
-async function flashClosePositions(symbol, holdSide) {
-  const productType = 'USDT-FUTURES';
-
-  try {
-    const closeResponse = await restClientV2.futuresFlashClosePositions({
-      symbol,
-      holdSide,
-      productType
-    });
-
-    console.log('Flash Close Positions Response:', closeResponse);
-
-    if (closeResponse.code === '00000') {
-      console.log(`Positions closed for ${symbol} on ${holdSide} side.`);
-    } else {
-      console.error(`Failed to close positions for ${symbol}. Response:`, closeResponse);
-    }
-  } catch (e) {
-    console.error('Error closing positions:', e.message);
-    throw e;
-  }
-}
-
-// Cancel all open orders for a given symbol
-async function cancelAllOpenOrders(symbol) {
-  const productType = 'USDT-FUTURES';
-  const marginCoin = 'USDT';
-
-  try {
-    // Fetch open orders
-    const pendingOrdersResult = await restClientV2.getFuturesOpenOrders(symbol, productType);
-    console.log('Pending Orders Result:', pendingOrdersResult);
-    const pendingOrders = pendingOrdersResult.data;
-
-    if (pendingOrders.length > 0) {
-      console.log('Pending orders found. Canceling all pending orders.');
-      for (const order of pendingOrders) {
-        await promiseSleep(100); // Optional small delay between cancel requests
-        const cancelResponse = await restClientV2.futuresCancelOrder({
-          symbol,
-          productType,
-          marginCoin,
-          orderId: order.orderId
-        });
-        console.log('Cancel Order Response:', cancelResponse);
-      }
-    } else {
-      console.log('No pending orders found.');
-    }
-  } catch (e) {
-    console.error('Error canceling orders:', e.message);
-    throw e;
-  }
-}
-
-// Manage trading assets by closing positions and canceling orders
-async function manageTradingAssets(symbol) {
-  const productType = 'USDT-FUTURES';
-  const marginCoin = 'USDT';
-
-  try {
-    // Determine position direction for flash close
-    const positionsResult = await restClientV2.getFuturesPositions(productType, marginCoin);
-    const positions = positionsResult.data;
     
-    let holdSide = '';
-    if (positions.some(pos => pos.symbol === symbol && pos.side === 'long')) {
-      holdSide = 'long';
-    } else if (positions.some(pos => pos.symbol === symbol && pos.side === 'short')) {
-      holdSide = 'short';
-    }
-    
-    await flashClosePositions(symbol, holdSide);
-    await cancelAllOpenOrders(symbol);
+    return openOrders;
   } catch (e) {
-    console.error('Error managing trading assets:', e.message);
-    throw new Error('Failed to manage trading assets.');
+    handleError(e, 'fetching open orders');
+    return [];
   }
 }
 
-// WebSocket event handlers
-function handleWsUpdate(data) {
-  console.log('WebSocket update:', data);
-}
-
-function logWSEvent(eventType, data) {
-  console.log(`WebSocket event [${eventType}]:`, data);
+// Centralized error handling function
+function handleError(error, context) {
+  console.error(`Error ${context}:`);
+  if (error.response) {
+    console.error('Response Data:', error.response.data);
+    console.error('Response Status:', error.response.status);
+    if (error.response.data.msg) {
+      console.error('Error Message:', error.response.data.msg);
+    }
+  } else {
+    console.error('Error Message:', error.message);
+  }
 }
 
 // Startup check to retrieve initial orders and positions
 async function startupCheck() {
-  const symbols = await fetchAvailableSymbols(); // Fetch or define available symbols
+  try {
+    const productType = 'USDT-FUTURES'; // Confirm this is correct for your account
+    const marginCoin = 'USDT';
+    const symbol = 'BTCUSDT'; // Adjust symbol if needed
 
-  for (const symbol of symbols) {
-    try {
-      await getOrdersAndPositions(symbol);
-    } catch (e) {
-      console.error(`Startup check failed for ${symbol}:`, e.message);
+    console.log(`Starting startup check with productType: ${productType}, marginCoin: ${marginCoin}, symbol: ${symbol}`);
+
+    const positions = await getAllPositions(productType, marginCoin);
+    const openOrders = await getOpenOrders(symbol, productType);
+
+    if (positions.length === 0 && openOrders.length === 0) {
+      console.log('No open positions or orders.');
     }
+    console.log('Startup Check Complete.');
+  } catch (e) {
+    console.error(`Startup check failed:`, e.message);
   }
 }
 
-// Example function to fetch available symbols
-async function fetchAvailableSymbols() {
-  // Example static list; replace with dynamic fetch as needed
-  return ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
-}
-
-async function postLongOrderEntry() {
-  tradeDirection = 'long';
-
-  await getAccountBalance();
-  await createOrder('long', size) // direction, positionSize
-};
-
-// setTimeout(postLongOrderEntry, 5000);
-
-async function postShortOrderEntry() {
-  tradeDirection = 'short';
-
-  await getAccountBalance();
-  await createOrder('short', size)  // direction, positionSize
-};
-// setTimeout(postShortOrderEntry, 5000);
-
 const port = process.env.PORT || 3000;
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`Server is running on port ${port}`);
+  try {
+    await startupCheck();
+  } catch (e) {
+    console.error('Error during startup check:', e.message);
+  }
 });
-
-// Perform startup checks after subscribing to WebSocket topics
-await startupCheck();
