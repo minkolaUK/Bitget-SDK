@@ -1,0 +1,116 @@
+const express = require('express');
+const {
+  isWsFuturesAccountSnapshotEvent,
+  isWsFuturesPositionsSnapshotEvent,
+  WebsocketClientV2,
+  RestClientV2,
+} = require('bitget-api');
+require('dotenv').config();
+
+const app = express();
+app.use(express.json());
+
+// Load environment variables
+const { API_KEY, API_SECRET, API_PASSPHRASE, PORT = 3000 } = process.env;
+
+// Check API credentials
+if (!API_KEY || !API_SECRET || !API_PASSPHRASE) {
+  console.error('Missing API credentials. Please check your environment variables.');
+  process.exit(1);
+}
+
+// Initialize WebSocket and REST clients
+const wsClient = new WebsocketClientV2({
+  apiKey: API_KEY,
+  apiSecret: API_SECRET,
+  apiPass: API_PASSPHRASE,
+});
+
+const restClientV2 = new RestClientV2({
+  apiKey: API_KEY,
+  apiSecret: API_SECRET,
+  apiPass: API_PASSPHRASE,
+});
+
+// Log WebSocket events
+function logWSEvent(type, data) {
+  console.log(new Date(), `WS ${type} event:`, data);
+}
+
+// Fetch open positions and pending orders
+const fetchOpenPositionsAndOrders = async () => {
+  try {
+    // Fetch open position
+    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'USDT-FUTURES' });
+    const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol: 'ETHUSDT', productType: 'USDT-FUTURES' });
+
+    const positions = positionsResponse.data || [];
+    const pendingOrders = pendingOrdersResponse.data || [];
+
+    // Log the number of open positions
+    if (positions.length === 0) {
+      console.log("No open positions.");
+    } else {
+      console.log(`Open positions found: ${positions.length}`);
+      console.log("Open positions details:", positions);
+    }
+
+    // Log the number of pending orders
+    if (pendingOrders.length === 0) {
+      console.log("No pending orders.");
+    } else {
+      console.log(`Pending orders found: ${pendingOrders.length}`);
+      console.log("Pending orders details:", pendingOrders);
+    }
+  } catch (error) {
+    console.error("Error fetching open positions or pending orders:", error.message);
+  }
+};
+
+// Fetch positions and orders on startup
+(async () => {
+  try {
+    await fetchOpenPositionsAndOrders();
+  } catch (error) {
+    console.error('Error during startup:', error.message);
+  }
+})();
+
+// WebSocket event handling
+async function handleWsUpdate(event) {
+  if (isWsFuturesAccountSnapshotEvent(event)) {
+    logWSEvent('account balance', event);
+  } else if (isWsFuturesPositionsSnapshotEvent(event)) {
+    logWSEvent('positions', event);
+  } else {
+    logWSEvent('unhandled', event); // Log unhandled events
+  }
+}
+
+// WebSocket client setup
+(async () => {
+  try {
+    // Log WebSocket events
+    wsClient.on('update', handleWsUpdate);
+    wsClient.on('open', data => logWSEvent('open', data));
+    wsClient.on('response', data => logWSEvent('response', data));
+    wsClient.on('reconnect', data => logWSEvent('reconnect', data));
+    wsClient.on('authenticated', data => logWSEvent('authenticated', data));
+    wsClient.on('error', data => logWSEvent('error', data));
+    wsClient.on('disconnect', data => logWSEvent('disconnect', data));
+
+    // Subscribe to WebSocket topics
+    const topics = ['account', 'positions', 'orders', 'orders-algo'];
+    topics.forEach(topic => {
+      wsClient.subscribeTopic('USDT-FUTURES', topic);
+      logWSEvent('subscribed', { topic });
+    });
+  } catch (error) {
+    console.error('Error setting up WebSocket client:', error.message);
+  }
+})();
+
+// Start the Express server
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
