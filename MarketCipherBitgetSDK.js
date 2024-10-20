@@ -1,10 +1,5 @@
-
-1|MarketCipher  | Server is running on port 3001
 const express = require('express');
-const {
-  WebsocketClientV2,
-  RestClientV2,
-} = require('bitget-api');
+const { WebsocketClientV2, RestClientV2 } = require('bitget-api');
 require('dotenv').config();
 const fetch = require('node-fetch');
 
@@ -33,12 +28,20 @@ const restClientV2 = new RestClientV2({
   apiPass: API_PASSPHRASE,
 });
 
+// Ticker and books definition
+const ticker = 'SBTCSUSDT'; // Adjust symbol as needed
+const books = {
+  symbol: ticker,
+  price: null,
+  candles: [],
+};
+
 // Log WebSocket events
 function logWSEvent(type, data) {
   console.log(new Date(), `WS ${type} event:`, data);
 }
 
-// Function to fetch historical candle data
+// Fetch candle data
 async function fetchCandleData(symbol) {
   try {
     console.log(`Fetching historical candle data for ${symbol}...`);
@@ -67,9 +70,9 @@ async function fetchCandleData(symbol) {
 // Function to calculate Market Cipher signals based on the fetched data
 function calculateMarketCipherSignals(candles) {
   console.log('Calculating Market Cipher signals...');
-
+  
   const hlc3 = candles.map(candle => (candle[1] + candle[2] + candle[3]) / 3); // HLC3 calculation
-
+  
   // Example simplified logic for Money Flow and Stochastic RSI
   const moneyFlow = calculateMoneyFlow(hlc3);
   const stochasticRSI = calculateStochasticRSI(candles);
@@ -89,73 +92,73 @@ function calculateMoneyFlow(hlc3) {
   });
 }
 
-// Simplified example function to calculate Stochastic RSI
+// Simplified Stochastic RSI calculation
 function calculateStochasticRSI(candles) {
   return candles.map(candle => (candle[4] - candle[1]) / (candle[2] - candle[1])); // Placeholder logic
 }
 
-// Function to send webhook notifications
+// Send webhook notifications
 async function sendWebhook(signal) {
-  const webhookUrl = 'http://localhost:3000/webhook'; // Your actual webhook endpoint
-  try {
-    const { symbol, price, side } = signal;
-    const size = '0.001'; // Size for the order, can be made dynamic if needed
-    const leverage = '10';
-
-    // Calculate take profit and stop loss
-    const presetTakeProfitPrice = side === 'buy' ? (price * 1.05).toFixed(2) : (price * 0.95).toFixed(2);
-    const presetStopLossPrice = side === 'buy' ? (price * 0.95).toFixed(2) : (price * 1.05).toFixed(2);
-
-    const payload = {
-      symbol,
-      price,
-      size,
-      orderType: 'limit',
-      marginCoin: 'SUSDT',
-      side,
-      leverage,
-      presetTakeProfitPrice,
-      presetStopLossPrice,
-    };
-
-    console.log(`Preparing to send ${side} webhook...`);
-    console.log(`Webhook Payload:`, JSON.stringify(payload, null, 2));
-
-    const response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (response.ok) {
-      console.log(`Webhook sent successfully for ${side} at price ${price}. Response: ${await response.text()}`);
-    } else {
-      console.error(`Failed to send webhook: ${response.statusText}. Response: ${await response.text()}`);
+    const webhookUrl = 'http://localhost:3000/webhook'; // Replace with your actual webhook endpoint
+    try {
+      const { symbol, price, side } = signal;
+      const size = '0.001'; // Can be made dynamic
+      const leverage = '10';
+  
+      const presetTakeProfitPrice = side === 'buy' ? (price * 1.05).toFixed(2) : (price * 0.95).toFixed(2);
+      const presetStopLossPrice = side === 'buy' ? (price * 0.95).toFixed(2) : (price * 1.05).toFixed(2);
+  
+      const payload = {
+        symbol,
+        price,
+        size,
+        orderType: 'limit',
+        marginCoin: 'USDT',
+        side,
+        leverage,
+        presetTakeProfitPrice,
+        presetStopLossPrice,
+      };
+  
+      console.log(`Preparing to send ${side} webhook...`);
+      console.log('Webhook Payload:', JSON.stringify(payload, null, 2));
+  
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+  
+      // Check response status
+      if (!response.ok) {
+        console.error(`Failed to send webhook. Status: ${response.status}, Response: ${await response.text()}`);
+      } else {
+        console.log(`Webhook sent successfully: ${await response.text()}`);
+      }
+    } catch (error) {
+      console.error('Error sending webhook:', error.message);
     }
-  } catch (error) {
-    console.error('Error sending webhook:', error.message);
-  }
 }
 
 // WebSocket event handling
 async function handleWsUpdate(event) {
   if (event.arg.instType === 'candle1m') {
     logWSEvent('candle update', event);
-
+    
     const candles = event.data.map(candle => [
-      candle[0], // timestamp
+      parseInt(candle[0]), // timestamp
       parseFloat(candle[1]), // open
       parseFloat(candle[2]), // high
       parseFloat(candle[3]), // low
       parseFloat(candle[4]), // close
-      parseFloat(candle[5])  // volume
+      parseFloat(candle[5]), // volume
     ]);
+
+    books.candles = candles; // Store candle data in books
 
     const marketData = {
       price: candles[candles.length - 1][4], // Close price of the latest candle
-      candles: candles,
+      candles,
     };
 
     const { buySignal, sellSignal } = calculateMarketCipherSignals(marketData.candles);
@@ -164,14 +167,14 @@ async function handleWsUpdate(event) {
     if (buySignal) {
       console.log(`Buy signal detected at price: ${marketData.price}`);
       await sendWebhook({
-        symbol: 'SBTCSUSDT', // Ensure the correct symbol is used here
+        symbol: ticker, // Ensure the correct symbol is used here
         price: marketData.price,
         side: 'buy',
       });
     } else if (sellSignal) {
       console.log(`Sell signal detected at price: ${marketData.price}`);
       await sendWebhook({
-        symbol: 'SBTCSUSDT', // Ensure the correct symbol is used here
+        symbol: ticker, // Ensure the correct symbol is used here
         price: marketData.price,
         side: 'sell',
       });
@@ -184,15 +187,38 @@ app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
+// WebSocket client setup
+(async () => {
+    try {
+      // Log WebSocket events
+      wsClient.on('update', handleWsUpdate);
+      wsClient.on('open', data => logWSEvent('open', data));
+      wsClient.on('response', data => logWSEvent('response', data));
+      wsClient.on('reconnect', data => logWSEvent('reconnect', data));
+      wsClient.on('authenticated', data => logWSEvent('authenticated', data));
+      wsClient.on('error', data => logWSEvent('error', data));
+      wsClient.on('disconnect', data => logWSEvent('disconnect', data));
+  
+      // Subscribe to WebSocket topics
+      const topics = ['ticker', 'candle1m'];
+      topics.forEach(topic => {
+        wsClient.subscribeTopic('SUSDT-FUTURES', topic);
+        logWSEvent('subscribed', { topic });
+      });
+    } catch (error) {
+      console.error('Error setting up WebSocket client:', error.message);
+    }
+ });
+
 // Start a periodic candle data fetch every minute for logging and signal checking
 setInterval(async () => {
-  const symbol = 'SBTCSUSDT'; // Adjust symbol as needed
-  console.log(`Fetching current candle data for ${symbol}...`);
-
-  const candles = await fetchCandleData(symbol);
-
-  if (candles) {
-    const { buySignal, sellSignal } = calculateMarketCipherSignals(candles);
-    console.log(`Current market data processed. Buy signal: ${buySignal}, Sell signal: ${sellSignal}`);
-  }
-}, 60000); // 60,000 ms = 1 minute
+    console.log(`Fetching current candle data for ${ticker}...`);
+  
+    const candles = await fetchCandleData(ticker);
+  
+    if (candles) {
+      books.candles = candles; // Store the latest candle data in books
+      const { buySignal, sellSignal } = calculateMarketCipherSignals(candles);
+      console.log(`Current market data processed. Buy signal: ${buySignal}, Sell signal: ${sellSignal}`);
+    }
+  }, 60000); // 60,000 ms = 1 minute
