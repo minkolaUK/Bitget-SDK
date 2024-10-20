@@ -1,7 +1,7 @@
+
+1|MarketCipher  | Server is running on port 3001
 const express = require('express');
 const {
-  isWsFuturesAccountSnapshotEvent,
-  isWsFuturesPositionsSnapshotEvent,
   WebsocketClientV2,
   RestClientV2,
 } = require('bitget-api');
@@ -67,9 +67,9 @@ async function fetchCandleData(symbol) {
 // Function to calculate Market Cipher signals based on the fetched data
 function calculateMarketCipherSignals(candles) {
   console.log('Calculating Market Cipher signals...');
-  
+
   const hlc3 = candles.map(candle => (candle[1] + candle[2] + candle[3]) / 3); // HLC3 calculation
-  
+
   // Example simplified logic for Money Flow and Stochastic RSI
   const moneyFlow = calculateMoneyFlow(hlc3);
   const stochasticRSI = calculateStochasticRSI(candles);
@@ -106,29 +106,31 @@ async function sendWebhook(signal) {
     const presetTakeProfitPrice = side === 'buy' ? (price * 1.05).toFixed(2) : (price * 0.95).toFixed(2);
     const presetStopLossPrice = side === 'buy' ? (price * 0.95).toFixed(2) : (price * 1.05).toFixed(2);
 
+    const payload = {
+      symbol,
+      price,
+      size,
+      orderType: 'limit',
+      marginCoin: 'SUSDT',
+      side,
+      leverage,
+      presetTakeProfitPrice,
+      presetStopLossPrice,
+    };
+
     console.log(`Preparing to send ${side} webhook...`);
-    console.log(`Details: Symbol: ${symbol}, Price: ${price}, Size: ${size}, Order Type: limit, Margin Coin: SUSDT, Leverage: ${leverage}, TP: ${presetTakeProfitPrice}, SL: ${presetStopLossPrice}`);
+    console.log(`Webhook Payload:`, JSON.stringify(payload, null, 2));
 
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        symbol,
-        price,
-        size,
-        orderType: 'limit',
-        marginCoin: 'SUSDT',
-        side,
-        leverage,
-        presetTakeProfitPrice,
-        presetStopLossPrice,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (response.ok) {
-      console.log(`Webhook sent successfully for ${side} at price ${price}.`);
+      console.log(`Webhook sent successfully for ${side} at price ${price}. Response: ${await response.text()}`);
     } else {
       console.error(`Failed to send webhook: ${response.statusText}. Response: ${await response.text()}`);
     }
@@ -141,7 +143,7 @@ async function sendWebhook(signal) {
 async function handleWsUpdate(event) {
   if (event.arg.instType === 'candle1m') {
     logWSEvent('candle update', event);
-    
+
     const candles = event.data.map(candle => [
       candle[0], // timestamp
       parseFloat(candle[1]), // open
@@ -186,9 +188,9 @@ app.listen(PORT, () => {
 setInterval(async () => {
   const symbol = 'SBTCSUSDT'; // Adjust symbol as needed
   console.log(`Fetching current candle data for ${symbol}...`);
-  
+
   const candles = await fetchCandleData(symbol);
-  
+
   if (candles) {
     const { buySignal, sellSignal } = calculateMarketCipherSignals(candles);
     console.log(`Current market data processed. Buy signal: ${buySignal}, Sell signal: ${sellSignal}`);
