@@ -96,10 +96,18 @@ function calculateStochasticRSI(candles) {
 
 // Function to send webhook notifications
 async function sendWebhook(signal) {
-  const webhookUrl = 'http://localhost:3000/webhook'; // Replace with your actual webhook endpoint
+  const webhookUrl = 'http://localhost:3000/webhook'; // Your actual webhook endpoint
   try {
-    console.log(`Preparing to send ${signal.side} webhook...`);
-    console.log(`Details: Symbol: ${signal.symbol}, Price: ${signal.price}, Size: ${signal.size || '0.001'}, Order Type: ${signal.orderType || 'limit'}, Margin Coin: ${signal.marginCoin || 'SUSDT'}, Leverage: ${signal.leverage || '10'}, TP: ${signal.presetTakeProfitPrice || '65000'}, SL: ${signal.presetStopLossPrice || '49000'}`);
+    const { symbol, price, side } = signal;
+    const size = '0.001'; // Size for the order, can be made dynamic if needed
+    const leverage = '10';
+
+    // Calculate take profit and stop loss
+    const presetTakeProfitPrice = side === 'buy' ? (price * 1.05).toFixed(2) : (price * 0.95).toFixed(2);
+    const presetStopLossPrice = side === 'buy' ? (price * 0.95).toFixed(2) : (price * 1.05).toFixed(2);
+
+    console.log(`Preparing to send ${side} webhook...`);
+    console.log(`Details: Symbol: ${symbol}, Price: ${price}, Size: ${size}, Order Type: limit, Margin Coin: SUSDT, Leverage: ${leverage}, TP: ${presetTakeProfitPrice}, SL: ${presetStopLossPrice}`);
 
     const response = await fetch(webhookUrl, {
       method: 'POST',
@@ -107,20 +115,20 @@ async function sendWebhook(signal) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        symbol: signal.symbol,                  
-        price: signal.price,                    
-        size: signal.size || '0.001',           
-        orderType: signal.orderType || 'limit', 
-        marginCoin: signal.marginCoin || 'SUSDT', 
-        side: signal.side,                      
-        leverage: signal.leverage || '10',      
-        presetTakeProfitPrice: signal.presetTakeProfitPrice || '65000', 
-        presetStopLossPrice: signal.presetStopLossPrice || '49000',     
+        symbol,
+        price,
+        size,
+        orderType: 'limit',
+        marginCoin: 'SUSDT',
+        side,
+        leverage,
+        presetTakeProfitPrice,
+        presetStopLossPrice,
       }),
     });
 
     if (response.ok) {
-      console.log(`Webhook sent successfully for ${signal.side} at price ${signal.price}.`);
+      console.log(`Webhook sent successfully for ${side} at price ${price}.`);
     } else {
       console.error(`Failed to send webhook: ${response.statusText}. Response: ${await response.text()}`);
     }
@@ -128,30 +136,6 @@ async function sendWebhook(signal) {
     console.error('Error sending webhook:', error.message);
   }
 }
-
-// WebSocket client setup
-(async () => {
-  try {
-    // Log WebSocket events
-    wsClient.on('update', handleWsUpdate);
-    wsClient.on('open', data => logWSEvent('open', data));
-    wsClient.on('response', data => logWSEvent('response', data));
-    wsClient.on('reconnect', data => logWSEvent('reconnect', data));
-    wsClient.on('authenticated', data => logWSEvent('authenticated', data));
-    wsClient.on('error', data => logWSEvent('error', data));
-    wsClient.on('disconnect', data => logWSEvent('disconnect', data));
-
-    // Subscribe to WebSocket topics
-    const topics = ['candle1m', 'ticker']; // Adjust topics as necessary
-    topics.forEach(topic => {
-      wsClient.subscribeTopic('SUSDT-FUTURES', topic, "SBTCSUSDT");
-      logWSEvent('subscribed', { topic });
-    });
-
-  } catch (error) {
-    console.error('Error setting up WebSocket client:', error.message);
-  }
-})();
 
 // WebSocket event handling
 async function handleWsUpdate(event) {
@@ -178,22 +162,16 @@ async function handleWsUpdate(event) {
     if (buySignal) {
       console.log(`Buy signal detected at price: ${marketData.price}`);
       await sendWebhook({
-        symbol: event.arg.instId,
+        symbol: 'SBTCSUSDT', // Ensure the correct symbol is used here
         price: marketData.price,
         side: 'buy',
-        leverage: '10',
-        presetTakeProfitPrice: '65000',
-        presetStopLossPrice: '49000',
       });
     } else if (sellSignal) {
       console.log(`Sell signal detected at price: ${marketData.price}`);
       await sendWebhook({
-        symbol: event.arg.instId,
+        symbol: 'SBTCSUSDT', // Ensure the correct symbol is used here
         price: marketData.price,
         side: 'sell',
-        leverage: '10',
-        presetTakeProfitPrice: '40000',
-        presetStopLossPrice: '51000',
       });
     }
   }
