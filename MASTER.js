@@ -183,48 +183,13 @@ const cancelAllOrders = async (symbol) => {
   }
 };
 
-// Function to close opposing positions or cancel orders
-const closeOpposingPositions = async (signal) => {
-  const { symbol, side } = signal;
-  const opposingSide = side === 'buy' ? 'short' : 'long'; // Opposing position logic
-
-  try {
-    console.log(`Checking for opposing positions or orders before placing ${side} order...`);
-
-    // Fetch open positions
-    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-    const positions = positionsResponse.data || [];
-
-    // Close opposing position if it exists
-    for (const position of positions) {
-      if (position.holdSide === opposingSide && position.symbol === symbol) {
-        console.log(`Opposing ${opposingSide} position detected. Attempting to close it...`);
-        await closeOpenPositions(); // Close the position
-        console.log(`Successfully closed ${opposingSide} position for ${symbol}.`);
-      }
-    }
-
-    // Fetch open orders and cancel opposing orders
-    const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
-    const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
-
-    for (const order of pendingOrders) {
-      if (order.side !== side && order.symbol === symbol) {
-        console.log(`Opposing ${order.side} order detected. Cancelling it...`);
-        await cancelAllOrders(symbol); // Cancel the opposing order
-        console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
-      }
-    }
-
-  } catch (error) {
-    console.error('Error while closing opposing positions or cancelling orders:', error.message);
-  }
-};
-
-
 // Function to place a trade
 async function placeTrade(signal) {
   const { symbol, price, side } = signal;
+
+  // Close opposing positions or cancel orders before placing a new trade
+  await closeOpposingPositions(signal);
+
   const productType = 'UMCBL'; 
   const marginMode = 'isolated';
   const tradeSide = 'open';
@@ -274,6 +239,44 @@ async function placeTrade(signal) {
     throw e;
   }
 }
+
+// Function to close opposing positions or cancel orders
+const closeOpposingPositions = async (signal) => {
+  const { symbol, side } = signal;
+  const opposingSide = side === 'buy' ? 'short' : 'long'; // Opposing position logic
+
+  try {
+    console.log(`Checking for opposing positions or orders before placing ${side} order...`);
+
+    // Fetch open positions
+    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+    const positions = positionsResponse.data || [];
+
+    // Close opposing position if it exists
+    for (const position of positions) {
+      if (position.holdSide === opposingSide && position.symbol === symbol) {
+        console.log(`Opposing ${opposingSide} position detected. Attempting to close it...`);
+        await closeOpenPositions(); // Close the position
+        console.log(`Successfully closed ${opposingSide} position for ${symbol}.`);
+      }
+    }
+
+    // Fetch open orders and cancel opposing orders
+    const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
+    const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
+
+    for (const order of pendingOrders) {
+      if (order.side !== side && order.symbol === symbol) {
+        console.log(`Opposing ${order.side} order detected. Cancelling it...`);
+        await cancelAllOrders(symbol); // Cancel the opposing order
+        console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
+      }
+    }
+
+  } catch (error) {
+    console.error('Error while closing opposing positions or cancelling orders:', error.message);
+  }
+};
 
 // WebSocket event handling
 async function handleWsUpdate(event) {
