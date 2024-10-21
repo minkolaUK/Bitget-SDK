@@ -81,22 +81,29 @@ const closeOpenPositions = async () => {
   try {
     const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
     const positions = positionsResponse.data || [];
-    
+
     if (positions.length === 0) {
       console.log("No positions to close.");
       return;
     }
 
     for (const position of positions) {
-      const holdSide = position.holdSide === 'long' ? 'buy' : 'sell';
+      const holdSide = position.holdSide === 'long' ? 'long' : 'short'; // Complies with API spec
       const params = {
         symbol: position.symbol,
-        holdSide: position.holdSide,
+        holdSide, // Specify direction unless in one-way mode
         productType: 'SUSDT-FUTURES',
       };
+      
       await restClientV2.futuresFlashClosePositions(params)
         .then((response) => {
-          console.log(`Closed position: ${position.symbol}`, response);
+          const { successList, failureList } = response.data;
+          if (successList.length > 0) {
+            console.log(`Successfully closed position(s):`, successList);
+          }
+          if (failureList.length > 0) {
+            console.error(`Failed to close position(s):`, failureList);
+          }
         })
         .catch((error) => {
           console.error(`Error closing position ${position.symbol}:`, error.message);
