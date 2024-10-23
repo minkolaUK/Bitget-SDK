@@ -37,12 +37,14 @@ function logWSEvent(type, data) {
   console.log(new Date(), `WS ${type} event:`, data);
 }
 
+// INDICATORS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // Fetch candle data
 async function fetchCandleData(symbol) {
   try {
     console.log(`Fetching historical candle data for ${symbol}...`);
     const candleData = await restClientV2.getFuturesHistoricCandles({
-      granularity: '1m',
+      granularity: '5m',
       limit: 100,
       productType: 'SUSDT-FUTURES',
       symbol: symbol,
@@ -62,7 +64,6 @@ async function fetchCandleData(symbol) {
     return null;
   }
 }
-
 
 // Calculate Market Cipher signals
 function calculateMarketCipherSignals(candles) {
@@ -89,6 +90,38 @@ function calculateMoneyFlow(hlc3) {
 function calculateStochasticRSI(candles) {
   return candles.map(candle => (candle[4] - candle[1]) / (candle[2] - candle[1])); // Placeholder logic
 }
+
+// Periodically fetch candle data and check signals every minute
+const ticker = 'SBTCSUSDT'; // Adjust the ticker as necessary
+setInterval(async () => {
+  try {
+    console.log("Starting trading loop...");
+    const candles = await fetchCandleData(ticker);
+    
+    if (!candles) {
+      console.error("No candles returned. Skipping signal calculation.");
+      return;
+    }
+
+    const signals = calculateMarketCipherSignals(candles);
+    
+    if (signals.buySignal || signals.sellSignal) {
+      console.log("Signal detected, attempting to place trade...");
+      await placeTrade({
+        symbol: ticker,
+        price: signals.latestPrice,
+        side: signals.buySignal ? 'buy' : 'sell',
+        leverage: 10, // Replace with actual leverage logic
+      });
+    } else {
+      console.log("No actionable signals at this time.");
+    }
+  } catch (error) {
+    console.error('Error in trading loop:', error.message);
+  }
+}, 60 * 1000); // Run every minute
+
+// POSITIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Fetch open positions and pending orders
 const fetchOpenPositionsAndOrders = async () => {
@@ -278,6 +311,8 @@ const closeOpposingPositions = async (signal) => {
   }
 };
 
+// WEBSOCKET ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // WebSocket event handling
 async function handleWsUpdate(event) {
   if (isWsFuturesAccountSnapshotEvent(event)) {
@@ -286,41 +321,51 @@ async function handleWsUpdate(event) {
     logWSEvent('positions', event);
   } else if (event.arg.instType === 'candle1m') {
     logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle5m') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle15m') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle30m') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle1H') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle4H') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle12H') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle1D') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle1W') {
+    logWSEvent('candle update', event);
+  } else if (event.arg.instType === 'candle1M') {
+    logWSEvent('candle update', event);
   } else {
     logWSEvent('unhandled', event);
   }
 }
 
-// Periodically fetch candle data and check signals every minute
-const ticker = 'SBTCSUSDT'; // Adjust the ticker as necessary
-setInterval(async () => {
+// WebSocket client setup
+(async () => {
   try {
-    console.log("Starting trading loop...");
-    const candles = await fetchCandleData(ticker);
-    
-    if (!candles) {
-      console.error("No candles returned. Skipping signal calculation.");
-      return;
-    }
+    // Log WebSocket events
+    wsClient.on('update', handleWsUpdate);
+    wsClient.on('open', data => logWSEvent('open', data));
+    wsClient.on('response', data => logWSEvent('response', data));
+    wsClient.on('reconnect', data => logWSEvent('reconnect', data));
+    wsClient.on('authenticated', data => logWSEvent('authenticated', data));
+    wsClient.on('error', data => logWSEvent('error', data));
+    wsClient.on('disconnect', data => logWSEvent('disconnect', data));
 
-    const signals = calculateMarketCipherSignals(candles);
-    
-    if (signals.buySignal || signals.sellSignal) {
-      console.log("Signal detected, attempting to place trade...");
-      await placeTrade({
-        symbol: ticker,
-        price: signals.latestPrice,
-        size: 1, // Replace with actual size logic
-        side: signals.buySignal ? 'buy' : 'sell',
-        leverage: 10, // Replace with actual leverage logic
-      });
-    } else {
-      console.log("No actionable signals at this time.");
-    }
+    // Subscribe to WebSocket topics
+    const topics = ['account', 'positions', 'trade', 'ticker', 'fill', 'orders-algo'];
+    topics.forEach(topic => {
+      wsClient.subscribeTopic('SUSDT-FUTURES', topic);
+      logWSEvent('subscribed', { topic });
+    });
   } catch (error) {
-    console.error('Error in trading loop:', error.message);
+    console.error('Error setting up WebSocket client:', error.message);
   }
-}, 60 * 1000); // Run every minute
+})();
 
 // Start the Express server
 app.listen(PORT, () => {
