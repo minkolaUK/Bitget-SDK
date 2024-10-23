@@ -43,7 +43,7 @@ async function fetchCandleData(symbol) {
     console.log(`Fetching historical candle data for ${symbol}...`);
     const candleData = await restClientV2.getFuturesHistoricCandles({
       granularity: '1m',
-      limit: 200,
+      limit: 100,
       productType: 'SUSDT-FUTURES',
       symbol: symbol,
     });
