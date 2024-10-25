@@ -183,78 +183,76 @@ const cancelAllOrders = async (symbol) => {
     }
 };
 
+
 // Function to place a trade
 async function placeTrade(signal) {
     const { symbol, price, side } = signal;
   
-    // Close opposing positions and cancel orders before placing the new trade
+    // Close opposing positions or cancel orders before placing a new trade
     await closeOpposingPositions(signal);
   
-    const productType = 'UMCBL';
+    // Exit if there is an existing position of the same side
+    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+    const positions = positionsResponse.data || [];
+  
+    const existingPosition = positions.find(pos => pos.symbol === symbol && pos.holdSide === side);
+    if (existingPosition) {
+      console.log(`Existing ${side} position found for ${symbol}. No action taken.`);
+      return; // Do nothing if an existing position of the same side is found
+    }
+  
+    const productType = 'UMCBL'; 
     const marginMode = 'isolated';
     const tradeSide = 'open';
     const force = 'gtc';
     const marginCoin = 'SUSDT';
     const orderType = 'limit';
-    const size = '0.001';
-    const leverage = '10';
+    const size = '0.001'; // Can be made dynamic
+    const leverage = '10'; // Can be made dynamic as well
   
+    // Calculate take profit and stop loss prices based on the side
     const presetTakeProfitPrice = side === 'buy' ? Math.floor(price * 1.05) : Math.floor(price * 0.95);
     const presetStopLossPrice = side === 'buy' ? Math.floor(price * 0.95) : Math.floor(price * 1.05);
   
     try {
-        const holdSide = side === 'buy' ? 'long' : 'short';
-        
-        // Check for existing positions or pending orders in the same direction
-        const existingPositions = await restClientV2.getFuturesPositions(productType, marginCoin);
-        const sameSidePosition = existingPositions.data.find(pos => pos.symbol === symbol && pos.holdSide === holdSide);
+      // Set the leverage for the trade
+      const holdSide = side === 'buy' ? 'long' : 'short';
+      await restClientV2.setFuturesLeverage({
+        symbol,
+        productType,
+        marginCoin,
+        leverage,
+        holdSide
+      });
   
-        const openOrders = await restClientV2.getFuturesOpenOrders(symbol, productType);
-        const sameSideOrder = openOrders.data.find(order => order.side === side && order.status === 'open');
+      // Create the order object
+      const order = {
+        symbol,
+        productType,
+        marginMode,
+        marginCoin,
+        size,
+        price,
+        side,
+        tradeSide,
+        orderType,
+        force,
+        presetTakeProfitPrice,
+        presetStopLossPrice
+      };
   
-        // If a position or order in the same direction exists, skip placing a new order
-        if (sameSidePosition || sameSideOrder) {
-            console.log(`Skipping new ${side} trade for ${symbol} as there is already an open ${side} position or order.`);
-            return;
-        }
-  
-        // Set leverage
-        await restClientV2.setFuturesLeverage({
-            symbol,
-            productType,
-            marginCoin,
-            leverage,
-            holdSide
-        });
-  
-        const order = {
-            symbol,
-            productType,
-            marginMode,
-            marginCoin,
-            size,
-            price,
-            side,
-            tradeSide,
-            orderType,
-            force,
-            presetTakeProfitPrice, 
-            presetStopLossPrice   
-        };
-  
-        console.log('Placing order: ', order);
-        const result = await restClientV2.futuresSubmitOrder(order);
-        console.log('Order result: ', result);
-        return result;
+      console.log('Placing order: ', order);
+      const result = await restClientV2.futuresSubmitOrder(order);
+      console.log('Order result: ', result);
+      return result;
     } catch (e) {
-        console.error('Error placing order:', e.message);
-        throw e;
+      console.error('Error placing order:', e.message);
+      throw e;
     }
-}
-
-
-// Function to close opposing positions or cancel orders
-const closeOpposingPositions = async (signal) => {
+  }
+  
+  // Function to close opposing positions or cancel orders
+  const closeOpposingPositions = async (signal) => {
     const { symbol, side } = signal;
     const opposingSide = side === 'buy' ? 'short' : 'long';
   
@@ -276,7 +274,7 @@ const closeOpposingPositions = async (signal) => {
       const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
   
       for (const order of pendingOrders) {
-        if (order.side !== side && order.symbol === symbol) {
+        if (order.side === opposingSide && order.symbol === symbol) {
           console.log(`Opposing ${order.side} order detected. Cancelling it...`);
           await cancelAllOrders(symbol);
           console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
@@ -306,22 +304,22 @@ setInterval(async () => {
   try {
     console.log("Starting trading loop...");
     const candles = await fetchCandleData(ticker);
-    
+
     if (!candles) {
       console.error("No candles returned. Skipping signal calculation.");
       return;
     }
 
     const signals = calculateMarketCipherSignals(candles);
-    
+
+    // Only place a trade if there is a signal
     if (signals.buySignal || signals.sellSignal) {
+      const side = signals.buySignal ? 'buy' : 'sell';
       console.log("Signal detected, attempting to place trade...");
       await placeTrade({
         symbol: ticker,
         price: signals.latestPrice,
-        size: 1, // Replace with actual size logic
-        side: signals.buySignal ? 'buy' : 'sell',
-        leverage: 10, // Replace with actual leverage logic
+        side: side,
       });
     } else {
       console.log("No actionable signals at this time.");
