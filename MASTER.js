@@ -37,14 +37,12 @@ function logWSEvent(type, data) {
   console.log(new Date(), `WS ${type} event:`, data);
 }
 
-// INDICATORS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 // Fetch candle data
 async function fetchCandleData(symbol) {
   try {
     console.log(`Fetching historical candle data for ${symbol}...`);
     const candleData = await restClientV2.getFuturesHistoricCandles({
-      granularity: '5m',
+      granularity: '1m',
       limit: 100,
       productType: 'SUSDT-FUTURES',
       symbol: symbol,
@@ -64,6 +62,7 @@ async function fetchCandleData(symbol) {
     return null;
   }
 }
+
 
 // Calculate Market Cipher signals
 function calculateMarketCipherSignals(candles) {
@@ -90,38 +89,6 @@ function calculateMoneyFlow(hlc3) {
 function calculateStochasticRSI(candles) {
   return candles.map(candle => (candle[4] - candle[1]) / (candle[2] - candle[1])); // Placeholder logic
 }
-
-// Periodically fetch candle data and check signals every minute
-const ticker = 'SBTCSUSDT'; // Adjust the ticker as necessary
-setInterval(async () => {
-  try {
-    console.log("Starting trading loop...");
-    const candles = await fetchCandleData(ticker);
-    
-    if (!candles) {
-      console.error("No candles returned. Skipping signal calculation.");
-      return;
-    }
-
-    const signals = calculateMarketCipherSignals(candles);
-    
-    if (signals.buySignal || signals.sellSignal) {
-      console.log("Signal detected, attempting to place trade...");
-      await placeTrade({
-        symbol: ticker,
-        price: signals.latestPrice,
-        side: signals.buySignal ? 'buy' : 'sell',
-        leverage: 10, // Replace with actual leverage logic
-      });
-    } else {
-      console.log("No actionable signals at this time.");
-    }
-  } catch (error) {
-    console.error('Error in trading loop:', error.message);
-  }
-}, 60 * 1000); // Run every minute
-
-// POSITIONS ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Fetch open positions and pending orders
 const fetchOpenPositionsAndOrders = async () => {
@@ -161,211 +128,208 @@ const fetchOpenPositionsAndOrders = async () => {
 
 // Close all open positions
 const closeOpenPositions = async () => {
-  try {
-    console.log("Closing all open positions...");
-    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-    const positions = positionsResponse.data || [];
-
-    if (positions.length === 0) {
-      console.log("No positions to close.");
-      return;
+    try {
+      console.log("Closing all open positions...");
+      const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+      const positions = positionsResponse.data || [];
+  
+      if (positions.length === 0) {
+        console.log("No positions to close.");
+        return;
+      }
+  
+      for (const position of positions) {
+        console.log(`Attempting to close position: ${position.symbol}`);
+        const holdSide = position.holdSide === 'long' ? 'long' : 'short'; // Complies with API spec
+        const params = {
+          symbol: position.symbol,
+          holdSide, // Specify direction unless in one-way mode
+          productType: 'SUSDT-FUTURES',
+        };
+        
+        await restClientV2.futuresFlashClosePositions(params)
+          .then((response) => {
+            const { successList, failureList } = response.data;
+            if (successList.length > 0) {
+              console.log(`Successfully closed position(s):`, successList);
+            }
+            if (failureList.length > 0) {
+              console.error(`Failed to close position(s):`, failureList);
+            }
+          })
+          .catch((error) => {
+            console.error(`Error closing position ${position.symbol}:`, error.message);
+          });
+      }
+    } catch (error) {
+      console.error("Error fetching positions:", error.message);
     }
-
-    for (const position of positions) {
-      console.log(`Attempting to close position: ${position.symbol}`);
-      const holdSide = position.holdSide === 'long' ? 'long' : 'short'; // Complies with API spec
-      const params = {
-        symbol: position.symbol,
-        holdSide, // Specify direction unless in one-way mode
-        productType: 'SUSDT-FUTURES',
-      };
-      
-      await restClientV2.futuresFlashClosePositions(params)
-        .then((response) => {
-          const { successList, failureList } = response.data;
-          if (successList.length > 0) {
-            console.log(`Successfully closed position(s):`, successList);
-          }
-          if (failureList.length > 0) {
-            console.error(`Failed to close position(s):`, failureList);
-          }
-        })
-        .catch((error) => {
-          console.error(`Error closing position ${position.symbol}:`, error.message);
-        });
-    }
-  } catch (error) {
-    console.error("Error fetching positions:", error.message);
-  }
 };
 
 // Function to cancel all open orders
 const cancelAllOrders = async (symbol) => {
-  try {
-    console.log(`Cancelling all orders for symbol: ${symbol}`);
-    
-    await restClientV2.futuresCancelAllOrders({ symbol, productType: 'SUSDT-FUTURES' })
-      .then((response) => {
-        console.log(`Cancelled all orders for symbol: ${symbol}`, response);
-      })
-      .catch((error) => {
-        console.error(`Error cancelling orders for symbol: ${symbol}`, error.message);
-      });
-  } catch (error) {
-    console.error("Error cancelling all orders:", error.message);
-  }
+    try {
+      console.log(`Cancelling all orders for symbol: ${symbol}`);
+      
+      await restClientV2.futuresCancelAllOrders({ symbol, productType: 'SUSDT-FUTURES' })
+        .then((response) => {
+          console.log(`Cancelled all orders for symbol: ${symbol}`, response);
+        })
+        .catch((error) => {
+          console.error(`Error cancelling orders for symbol: ${symbol}`, error.message);
+        });
+    } catch (error) {
+      console.error("Error cancelling all orders:", error.message);
+    }
 };
 
 // Function to place a trade
 async function placeTrade(signal) {
-  const { symbol, price, side } = signal;
-
-  // Close opposing positions or cancel orders before placing a new trade
-  await closeOpposingPositions(signal);
-
-  const productType = 'UMCBL'; 
-  const marginMode = 'isolated';
-  const tradeSide = 'open';
-  const force = 'gtc';
-  const marginCoin = 'SUSDT';
-  const orderType = 'limit';
-  const size = '0.001'; // Can be made dynamic
-  const leverage = '10'; // Can be made dynamic as well
-
-  // Calculate take profit and stop loss prices based on the side
-  const presetTakeProfitPrice = side === 'buy' ? Math.floor(price * 1.05) : Math.floor(price * 0.95);
-  const presetStopLossPrice = side === 'buy' ? Math.floor(price * 0.95) : Math.floor(price * 1.05);
+    const { symbol, price, side } = signal;
   
-  try {
-    // Set the leverage for the trade
-    const holdSide = side === 'buy' ? 'long' : 'short';
-    await restClientV2.setFuturesLeverage({
-      symbol,
-      productType,
-      marginCoin,
-      leverage,
-      holdSide
-    });
-
-    // Create the order object
-    const order = {
-      symbol,
-      productType,
-      marginMode,
-      marginCoin,
-      size,
-      price,
-      side,
-      tradeSide,
-      orderType,
-      force,
-      presetTakeProfitPrice, 
-      presetStopLossPrice   
-    };
-
-    console.log('Placing order: ', order);
-    const result = await restClientV2.futuresSubmitOrder(order);
-    console.log('Order result: ', result);
-    return result;
-  } catch (e) {
-    console.error('Error placing order:', e.message);
-    throw e;
-  }
+    // Close opposing positions and cancel orders before placing the new trade
+    await closeOpposingPositions(signal);
+  
+    const productType = 'UMCBL';
+    const marginMode = 'isolated';
+    const tradeSide = 'open';
+    const force = 'gtc';
+    const marginCoin = 'SUSDT';
+    const orderType = 'limit';
+    const size = '0.001';
+    const leverage = '10';
+  
+    const presetTakeProfitPrice = side === 'buy' ? Math.floor(price * 1.05) : Math.floor(price * 0.95);
+    const presetStopLossPrice = side === 'buy' ? Math.floor(price * 0.95) : Math.floor(price * 1.05);
+  
+    try {
+        const holdSide = side === 'buy' ? 'long' : 'short';
+        
+        // Check for existing positions or pending orders in the same direction
+        const existingPositions = await restClientV2.getFuturesPositions(productType, marginCoin);
+        const sameSidePosition = existingPositions.data.find(pos => pos.symbol === symbol && pos.holdSide === holdSide);
+  
+        const openOrders = await restClientV2.getFuturesOpenOrders(symbol, productType);
+        const sameSideOrder = openOrders.data.find(order => order.side === side && order.status === 'open');
+  
+        // If a position or order in the same direction exists, skip placing a new order
+        if (sameSidePosition || sameSideOrder) {
+            console.log(`Skipping new ${side} trade for ${symbol} as there is already an open ${side} position or order.`);
+            return;
+        }
+  
+        // Set leverage
+        await restClientV2.setFuturesLeverage({
+            symbol,
+            productType,
+            marginCoin,
+            leverage,
+            holdSide
+        });
+  
+        const order = {
+            symbol,
+            productType,
+            marginMode,
+            marginCoin,
+            size,
+            price,
+            side,
+            tradeSide,
+            orderType,
+            force,
+            presetTakeProfitPrice, 
+            presetStopLossPrice   
+        };
+  
+        console.log('Placing order: ', order);
+        const result = await restClientV2.futuresSubmitOrder(order);
+        console.log('Order result: ', result);
+        return result;
+    } catch (e) {
+        console.error('Error placing order:', e.message);
+        throw e;
+    }
 }
+
 
 // Function to close opposing positions or cancel orders
 const closeOpposingPositions = async (signal) => {
-  const { symbol, side } = signal;
-  const opposingSide = side === 'buy' ? 'short' : 'long'; // Opposing position logic
-
-  try {
-    console.log(`Checking for opposing positions or orders before placing ${side} order...`);
-
-    // Fetch open positions
-    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-    const positions = positionsResponse.data || [];
-
-    // Close opposing position if it exists
-    for (const position of positions) {
-      if (position.holdSide === opposingSide && position.symbol === symbol) {
-        console.log(`Opposing ${opposingSide} position detected. Attempting to close it...`);
-        await closeOpenPositions(); // Close the position
-        console.log(`Successfully closed ${opposingSide} position for ${symbol}.`);
+    const { symbol, side } = signal;
+    const opposingSide = side === 'buy' ? 'short' : 'long';
+  
+    try {
+      console.log(`Checking for opposing positions or orders before placing ${side} order...`);
+  
+      const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+      const positions = positionsResponse.data || [];
+  
+      for (const position of positions) {
+        if (position.holdSide === opposingSide && position.symbol === symbol) {
+          console.log(`Opposing ${opposingSide} position detected. Attempting to close it...`);
+          await closeOpenPositions(); // Close the position
+          console.log(`Successfully closed ${opposingSide} position for ${symbol}.`);
+        }
       }
-    }
-
-    // Fetch open orders and cancel opposing orders
-    const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
-    const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
-
-    for (const order of pendingOrders) {
-      if (order.side !== side && order.symbol === symbol) {
-        console.log(`Opposing ${order.side} order detected. Cancelling it...`);
-        await cancelAllOrders(symbol); // Cancel the opposing order
-        console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
+  
+      const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
+      const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
+  
+      for (const order of pendingOrders) {
+        if (order.side !== side && order.symbol === symbol) {
+          console.log(`Opposing ${order.side} order detected. Cancelling it...`);
+          await cancelAllOrders(symbol);
+          console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
+        }
       }
+    } catch (error) {
+      console.error('Error while closing opposing positions or cancelling orders:', error.message);
     }
-
-  } catch (error) {
-    console.error('Error while closing opposing positions or cancelling orders:', error.message);
-  }
 };
-
-// WEBSOCKET ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // WebSocket event handling
 async function handleWsUpdate(event) {
-  if (isWsFuturesAccountSnapshotEvent(event)) {
-    logWSEvent('account balance', event);
-  } else if (isWsFuturesPositionsSnapshotEvent(event)) {
-    logWSEvent('positions', event);
-  } else if (event.arg.instType === 'candle1m') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle5m') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle15m') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle30m') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle1H') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle4H') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle12H') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle1D') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle1W') {
-    logWSEvent('candle update', event);
-  } else if (event.arg.instType === 'candle1M') {
-    logWSEvent('candle update', event);
-  } else {
-    logWSEvent('unhandled', event);
-  }
+    if (isWsFuturesAccountSnapshotEvent(event)) {
+      logWSEvent('account balance', event);
+    } else if (isWsFuturesPositionsSnapshotEvent(event)) {
+      logWSEvent('positions', event);
+    } else if (event.arg.instType === 'candle1m') {
+      logWSEvent('candle update', event);
+    } else {
+      logWSEvent('unhandled', event);
+    }
 }
 
-// WebSocket client setup
-(async () => {
+// Periodically fetch candle data and check signals every minute
+const ticker = 'SBTCSUSDT'; // Adjust the ticker as necessary
+setInterval(async () => {
   try {
-    // Log WebSocket events
-    wsClient.on('update', handleWsUpdate);
-    wsClient.on('open', data => logWSEvent('open', data));
-    wsClient.on('response', data => logWSEvent('response', data));
-    wsClient.on('reconnect', data => logWSEvent('reconnect', data));
-    wsClient.on('authenticated', data => logWSEvent('authenticated', data));
-    wsClient.on('error', data => logWSEvent('error', data));
-    wsClient.on('disconnect', data => logWSEvent('disconnect', data));
+    console.log("Starting trading loop...");
+    const candles = await fetchCandleData(ticker);
+    
+    if (!candles) {
+      console.error("No candles returned. Skipping signal calculation.");
+      return;
+    }
 
-    // Subscribe to WebSocket topics
-    const topics = ['account', 'positions', 'trade', 'ticker', 'fill', 'orders-algo'];
-    topics.forEach(topic => {
-      wsClient.subscribeTopic('SUSDT-FUTURES', topic);
-      logWSEvent('subscribed', { topic });
-    });
+    const signals = calculateMarketCipherSignals(candles);
+    
+    if (signals.buySignal || signals.sellSignal) {
+      console.log("Signal detected, attempting to place trade...");
+      await placeTrade({
+        symbol: ticker,
+        price: signals.latestPrice,
+        size: 1, // Replace with actual size logic
+        side: signals.buySignal ? 'buy' : 'sell',
+        leverage: 10, // Replace with actual leverage logic
+      });
+    } else {
+      console.log("No actionable signals at this time.");
+    }
   } catch (error) {
-    console.error('Error setting up WebSocket client:', error.message);
+    console.error('Error in trading loop:', error.message);
   }
-})();
+}, 60 * 1000); // Run every minute
 
 // Start the Express server
 app.listen(PORT, () => {
