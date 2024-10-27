@@ -1,7 +1,5 @@
 const express = require('express');
 const {
-  isWsFuturesAccountSnapshotEvent,
-  isWsFuturesPositionsSnapshotEvent,
   WebsocketClientV2,
   RestClientV2,
 } = require('bitget-api');
@@ -32,139 +30,161 @@ const restClientV2 = new RestClientV2({
   apiPass: API_PASSPHRASE,
 });
 
+// Start the Express server
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+
 // Log WebSocket events
 function logWSEvent(type, data) {
   console.log(new Date(), `WS ${type} event:`, data);
 }
 
-// Fetch candle data
-async function fetchCandleData(symbol) {
-  try {
-    console.log(`Fetching historical candle data for ${symbol}...`);
-    const candleData = await restClientV2.getFuturesHistoricCandles({
-      granularity: '5m',
-      limit: 100,
-      productType: 'SUSDT-FUTURES',
-      symbol: symbol,
-    });
+//////////// - Indicators - ///////////////////////
+  
+// Fetch candle data for multiple timeframes
+async function fetchCandleData(symbol, granularity) {
+    try {
+        console.log(`Fetching ${granularity} historical candle data for ${symbol}`);
+        const candleData = await restClientV2.getFuturesHistoricCandles({
+            granularity,
+            limit: 100,
+            productType: 'SUSDT-FUTURES',
+            symbol: symbol,
+        });
 
-    console.log(`Fetched ${candleData.data.length} candle entries for ${symbol}.`);  // Log only the count of candles, not the data itself
-    return candleData.data.map(candle => [
-      candle[0], // timestamp
-      parseFloat(candle[1]), // open
-      parseFloat(candle[2]), // high
-      parseFloat(candle[3]), // low
-      parseFloat(candle[4]), // close
-      parseFloat(candle[5]), // volume
-    ]);
-  } catch (error) {
-    console.error('Error fetching candle data:', error.message);
-    return null;
-  }
+        console.log(`Fetched ${candleData.data.length} candle entries for ${symbol} on ${granularity} timeframe.`);
+        return candleData.data.map(candle => [
+            candle[0], // timestamp
+            parseFloat(candle[1]), // open
+            parseFloat(candle[2]), // high
+            parseFloat(candle[3]), // low
+            parseFloat(candle[4]), // close
+            parseFloat(candle[5]), // volume
+        ]);
+    } catch (error) {
+        console.error(`Error fetching ${granularity} candle data:`, error.message);
+        return null;
+    }
 }
 
-
-// Calculate Market Cipher signals
+// Calculate Market Cipher signals with additional indicators
 function calculateMarketCipherSignals(candles) {
-  const hlc3 = candles.map(candle => (candle[1] + candle[2] + candle[3]) / 3); // HLC3 calculation
+    const hlc3 = candles.map(candle => (candle[1] + candle[2] + candle[3]) / 3); // HLC3 calculation
+    
+    const moneyFlow = calculateMoneyFlow(hlc3);
+    const stochasticRSI = calculateStochasticRSI(candles);
+    const ema = calculateEMA(candles, 9); // Example EMA indicator
 
-  const moneyFlow = calculateMoneyFlow(hlc3);
-  const stochasticRSI = calculateStochasticRSI(candles);
+    const buySignal = moneyFlow[moneyFlow.length - 1] > 0 && stochasticRSI[stochasticRSI.length - 1] < 0.2 && candles[candles.length - 1][4] > ema[ema.length - 1];
+    const sellSignal = moneyFlow[moneyFlow.length - 1] < 0 && stochasticRSI[stochasticRSI.length - 1] > 0.8 && candles[candles.length - 1][4] < ema[ema.length - 1];
 
-  const buySignal = moneyFlow[moneyFlow.length - 1] > 0 && stochasticRSI[stochasticRSI.length - 1] < 0.2;
-  const sellSignal = moneyFlow[moneyFlow.length - 1] < 0 && stochasticRSI[stochasticRSI.length - 1] > 0.8;
-
-  console.log('Signal calculation complete. Buy signal:', buySignal, 'Sell signal:', sellSignal);
-  return { buySignal, sellSignal, latestPrice: candles[candles.length - 1][4] };
+    console.log('Indicator Values - Money Flow:', moneyFlow[moneyFlow.length - 1], 'Stochastic RSI:', stochasticRSI[stochasticRSI.length - 1], 'EMA:', ema[ema.length - 1]);
+    console.log('Signal calculation complete. Buy signal:', buySignal, 'Sell signal:', sellSignal);
+    
+    return { buySignal, sellSignal, latestPrice: candles[candles.length - 1][4] };
 }
 
-// Simplified example function to calculate Money Flow
+// Example function to calculate Money Flow
 function calculateMoneyFlow(hlc3) {
-  return hlc3.map((value, index) => {
-    return index === 0 ? 0 : (value > hlc3[index - 1] ? 1 : -1); // Placeholder logic
-  });
+    return hlc3.map((value, index) => {
+        return index === 0 ? 0 : (value > hlc3[index - 1] ? 1 : -1); // Placeholder logic
+    });
 }
 
 // Simplified Stochastic RSI calculation
 function calculateStochasticRSI(candles) {
-  return candles.map(candle => (candle[4] - candle[1]) / (candle[2] - candle[1])); // Placeholder logic
+    return candles.map(candle => (candle[4] - candle[1]) / (candle[2] - candle[1])); // Placeholder logic
 }
+
+// Example EMA calculation
+function calculateEMA(candles, period) {
+    let ema = [];
+    let multiplier = 2 / (period + 1);
+    let sma = candles.slice(0, period).reduce((sum, candle) => sum + candle[4], 0) / period;
+
+    ema.push(sma); // Start EMA with SMA value
+    for (let i = period; i < candles.length; i++) {
+        let close = candles[i][4];
+        ema.push((close - ema[ema.length - 1]) * multiplier + ema[ema.length - 1]);
+    }
+    return ema;
+}
+
+// Periodically fetch candle data across multiple timeframes and check signals
+const ticker = 'SBTCSUSDT'; // Adjust the ticker as necessary
+const timeframes = ['1m', '5m', '15m', '30m']; // Array of timeframes to fetch
+
+setInterval(async () => {
+    try {
+        console.log("Starting trading loop");
+        let candlesByTimeframe = {};
+
+        for (const timeframe of timeframes) {
+            candlesByTimeframe[timeframe] = await fetchCandleData(ticker, timeframe);
+            if (!candlesByTimeframe[timeframe]) {
+                console.error(`No candles returned for ${timeframe}. Skipping this timeframe.`);
+                return;
+            }
+        }
+
+        const signals = calculateMarketCipherSignals(candlesByTimeframe['15m']); // Use 15m candles for Market Cipher
+
+        if (signals.buySignal || signals.sellSignal) {
+            console.log("Signal detected, attempting to place trade");
+            await placeTrade({
+                symbol: ticker,
+                price: signals.latestPrice,
+                size: 1, // Replace with actual size logic
+                side: signals.buySignal ? 'buy' : 'sell',
+                leverage: 10, // Replace with actual leverage logic
+            });
+        } else {
+            console.log("No actionable signals at this time.");
+        }
+    } catch (error) {
+        console.error('Error in trading loop:', error.message);
+    }
+}, 60 * 1000); // Run every minute
+
+
+//////////// - Positions & Orders - ///////////////////////
 
 // Fetch open positions and pending orders
 const fetchOpenPositionsAndOrders = async () => {
-  try {
-    console.log("Fetching open positions and pending orders...");
-    // Fetch open positions
-    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-    const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol: 'SBTCSUSDT', productType: 'SUSDT-FUTURES' });
-
-    const positions = positionsResponse.data || [];
-    const pendingOrders = pendingOrdersResponse.data || [];
-
-    // Log the number of open positions
-    if (positions.length === 0) {
-      console.log("No open positions.");
-    } else {
-      console.log(`Open positions found: ${positions.length}`);
-      console.log("Open positions details:", positions);
+    try {
+      console.log("Fetching open positions and pending orders...");
+      // Fetch open positions
+      const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+      const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol: 'SBTCSUSDT', productType: 'SUSDT-FUTURES' });
+  
+      const positions = positionsResponse.data || [];
+      const pendingOrders = pendingOrdersResponse.data || [];
+  
+      // Log the number of open positions
+      if (positions.length === 0) {
+        console.log("No open positions.");
+      } else {
+        console.log(`Open positions found: ${positions.length}`);
+        console.log("Open positions details:", positions);
+      }
+  
+      // Log the number of pending orders
+      if (pendingOrders.length === 0) {
+        console.log("No pending orders.");
+      } else {
+        console.log(`Pending orders found: ${pendingOrders.length}`);
+        console.log("Pending orders details:", pendingOrders);
+      }
+    } catch (error) {
+      console.error("Error fetching open positions or pending orders:", error.message);
     }
-
-    // Log the number of pending orders
-    if (pendingOrders.length === 0) {
-      console.log("No pending orders.");
-    } else {
-      console.log(`Pending orders found: ${pendingOrders.length}`);
-      console.log("Pending orders details:", pendingOrders);
-    }
-  } catch (error) {
-    console.error("Error fetching open positions or pending orders:", error.message);
-  }
 };
-
+  
 // Fetch positions and orders on startup
-(async () => {
-  await fetchOpenPositionsAndOrders();
+  (async () => {
+    await fetchOpenPositionsAndOrders();
 })();
-
-// Close all open positions
-const closeOpenPositions = async () => {
-  try {
-    console.log("Closing all open positions...");
-    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-    const positions = positionsResponse.data || [];
-
-    if (positions.length === 0) {
-      console.log("No positions to close.");
-      return;
-    }
-
-    for (const position of positions) {
-      console.log(`Attempting to close position: ${position.symbol}`);
-      const holdSide = position.holdSide === 'long' ? 'long' : 'short'; // Complies with API spec
-      const params = {
-        symbol: position.symbol,
-        holdSide, // Specify direction unless in one-way mode
-        productType: 'SUSDT-FUTURES',
-      };
-      
-      await restClientV2.futuresFlashClosePositions(params)
-        .then((response) => {
-          const { successList, failureList } = response.data;
-          if (successList.length > 0) {
-            console.log(`Successfully closed position(s):`, successList);
-          }
-          if (failureList.length > 0) {
-            console.error(`Failed to close position(s):`, failureList);
-          }
-        })
-        .catch((error) => {
-          console.error(`Error closing position ${position.symbol}:`, error.message);
-        });
-    }
-  } catch (error) {
-    console.error("Error fetching positions:", error.message);
-  }
-};
 
 // Function to cancel all open orders
 const cancelAllOrders = async (symbol) => {
@@ -262,14 +282,13 @@ async function placeTrade(signal) {
   }
 }
 
-
 // Function to close opposing positions or cancel orders
 const closeOpposingPositions = async (signal) => {
   const { symbol, side } = signal;
   const opposingSide = side === 'buy' ? 'short' : 'long'; // Opposing position logic
 
   try {
-    console.log(`Checking for opposing positions or orders before placing ${side} order...`);
+    console.log(`Checking for opposing positions or orders before placing ${side} order.`);
 
     // Fetch open positions
     const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
@@ -278,7 +297,7 @@ const closeOpposingPositions = async (signal) => {
     // Close opposing position if it exists
     for (const position of positions) {
       if (position.holdSide === opposingSide && position.symbol === symbol) {
-        console.log(`Opposing ${opposingSide} position detected. Attempting to close it...`);
+        console.log(`Opposing ${opposingSide} position detected. Attempting to close it.`);
         await closeOpenPositions(); // Close the position
         console.log(`Successfully closed ${opposingSide} position for ${symbol}.`);
       }
@@ -290,7 +309,7 @@ const closeOpposingPositions = async (signal) => {
 
     for (const order of pendingOrders) {
       if (order.side !== side && order.symbol === symbol) {
-        console.log(`Opposing ${order.side} order detected. Cancelling it...`);
+        console.log(`Opposing ${order.side} order detected. Cancelling it.`);
         await cancelAllOrders(symbol); // Cancel the opposing order
         console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
       }
@@ -300,47 +319,3 @@ const closeOpposingPositions = async (signal) => {
     console.error('Error while closing opposing positions or cancelling orders:', error.message);
   }
 };
-
-// WebSocket event handling
-async function handleWsUpdate(event) {
-  if (isWsFuturesAccountSnapshotEvent(event)) {
-    logWSEvent('account balance', event);
-  } else if (isWsFuturesPositionsSnapshotEvent(event)) {
-    logWSEvent('positions', event);
-  } else if (event.arg.instType === 'candle1m') {
-    logWSEvent('candle update', event);
-  } else {
-    logWSEvent('unhandled', event);
-  }
-}
-
-// Periodically fetch candle data and check signals every minute
-const ticker = 'SBTCSUSDT'; // Adjust the ticker as necessary
-setInterval(async () => {
-  try {
-    console.log("Starting trading loop...");
-    const candles = await fetchCandleData(ticker);
-    
-    if (!candles) {
-      console.error("No candles returned. Skipping signal calculation.");
-      return;
-    }
-
-    const signals = calculateMarketCipherSignals(candles);
-    
-    if (signals.buySignal || signals.sellSignal) {
-      console.log("Signal detected, attempting to place trade...");
-      await placeTrade({
-        symbol: ticker,
-        price: signals.latestPrice,
-        size: 1, // Replace with actual size logic
-        side: signals.buySignal ? 'buy' : 'sell',
-        leverage: 10, // Replace with actual leverage logic
-      });
-    } else {
-      console.log("No actionable signals at this time.");
-    }
-  } catch (error) {
-    console.error('Error in trading loop:', error.message);
-  }
-}, 60 * 1000); // Run every minute
