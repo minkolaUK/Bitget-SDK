@@ -135,7 +135,7 @@ setInterval(async () => {
             await placeTrade({
                 symbol: ticker,
                 price: signals.latestPrice,
-                size: 1, // Replace with actual size logic
+                size: 0.001, // Replace with actual size logic
                 side: signals.buySignal ? 'buy' : 'sell',
                 leverage: 10, // Replace with actual leverage logic
             });
@@ -153,85 +153,121 @@ setInterval(async () => {
 // Fetch open positions and pending orders
 const fetchOpenPositionsAndOrders = async () => {
     try {
-      console.log("Fetching open positions and pending orders...");
-      // Fetch open positions
-      const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-      const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol: 'SBTCSUSDT', productType: 'SUSDT-FUTURES' });
-  
-      const positions = positionsResponse.data || [];
-      const pendingOrders = pendingOrdersResponse.data || [];
-  
-      // Log the number of open positions
-      if (positions.length === 0) {
-        console.log("No open positions.");
-      } else {
-        console.log(`Open positions found: ${positions.length}`);
-        console.log("Open positions details:", positions);
-      }
-  
-      // Log the number of pending orders
-      if (pendingOrders.length === 0) {
-        console.log("No pending orders.");
-      } else {
-        console.log(`Pending orders found: ${pendingOrders.length}`);
-        console.log("Pending orders details:", pendingOrders);
-      }
+        console.log("Fetching open positions and pending orders...");
+        // Fetch open positions
+        const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+        const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol: 'SBTCSUSDT', productType: 'SUSDT-FUTURES' });
+
+        const positions = positionsResponse.data || [];
+        const pendingOrders = pendingOrdersResponse.data || [];
+
+        if (positions.length === 0) {
+            console.log("No open positions.");
+        } else {
+            console.log(`Open positions found: ${positions.length}`, positions);
+        }
+
+        if (pendingOrders.length === 0) {
+            console.log("No pending orders.");
+        } else {
+            console.log(`Pending orders found: ${pendingOrders.length}`, pendingOrders);
+        }
     } catch (error) {
-      console.error("Error fetching open positions or pending orders:", error.message);
+        console.error("Error fetching open positions or pending orders:", error.message);
     }
 };
-  
-// Fetch positions and orders on startup
-  (async () => {
-    await fetchOpenPositionsAndOrders();
-})();
 
 // Function to cancel all open orders
 const cancelAllOrders = async (symbol) => {
-  try {
-    console.log(`Cancelling all orders for symbol: ${symbol}`);
-    
-    await restClientV2.futuresCancelAllOrders({ symbol, productType: 'SUSDT-FUTURES' })
-      .then((response) => {
+    try {
+        console.log(`Cancelling all orders for symbol: ${symbol}`);
+        const response = await restClientV2.futuresCancelAllOrders({ symbol, productType: 'SUSDT-FUTURES' });
         console.log(`Cancelled all orders for symbol: ${symbol}`, response);
-      })
-      .catch((error) => {
-        console.error(`Error cancelling orders for symbol: ${symbol}`, error.message);
-      });
-  } catch (error) {
-    console.error("Error cancelling all orders:", error.message);
-  }
+    } catch (error) {
+        console.error("Error cancelling all orders:", error.message);
+    }
+};
+
+// Function to close open positions
+const closeOpenPositions = async (symbol, holdSide) => {
+    try {
+        console.log(`Closing ${holdSide} position for ${symbol}`);
+        const response = await restClientV2.futuresFlashClosePositions({
+            symbol,
+            holdSide,
+            productType: 'SUSDT-FUTURES'
+        });
+        console.log(`Closed ${holdSide} position for ${symbol}`, response);
+    } catch (error) {
+        console.error(`Error closing ${holdSide} position for ${symbol}:`, error.message);
+    }
+};
+
+// Function to close opposing positions or cancel orders
+const closeOpposingPositions = async (signal) => {
+    const { symbol, side } = signal;
+    const opposingSide = side === 'buy' ? 'short' : 'long';
+
+    try {
+        console.log(`Checking for opposing positions or orders before placing ${side} order...`);
+
+        // Fetch open positions
+        const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+        const positions = positionsResponse.data || [];
+
+        for (const position of positions) {
+            if (position.holdSide === opposingSide && position.symbol === symbol) {
+                console.log(`Opposing ${opposingSide} position detected. Attempting to close it...`);
+                await closeOpenPositions(symbol, opposingSide);
+                console.log(`Successfully closed ${opposingSide} position for ${symbol}.`);
+            }
+        }
+
+        // Fetch open orders and cancel opposing orders
+        const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
+        const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
+
+        for (const order of pendingOrders) {
+            if (order.side !== side && order.symbol === symbol) {
+                console.log(`Opposing ${order.side} order detected. Cancelling it...`);
+                await cancelAllOrders(symbol);
+                console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
+            }
+        }
+    } catch (error) {
+        console.error("Error while closing opposing positions or cancelling orders:", error.message);
+    }
 };
 
 // Function to place a trade
 async function placeTrade(signal) {
-  const { symbol, price, side } = signal;
+    const { symbol, price, side } = signal;
 
-  // Close opposing positions or cancel orders before placing a new trade
-  await closeOpposingPositions(signal);
+    // Close opposing positions or cancel orders before placing a new trade
+    await closeOpposingPositions(signal);
 
-  // Fetch current positions and pending orders
-  const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-  const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
+    // Fetch current positions and pending orders
+    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+    const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
 
-  const positions = positionsResponse.data || [];
-  const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
+    const positions = positionsResponse.data || [];
+    const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
 
-  // Check if there is already a matching position
-  const existingPosition = positions.find(pos => pos.holdSide === (side === 'buy' ? 'long' : 'short') && pos.symbol === symbol);
-  if (existingPosition) {
-    console.log(`A matching ${side} position already exists. No action taken.`);
-    return; // Skip if there's an existing position matching the signal
-  }
+    // Check if there is already a matching position
+    const existingPosition = positions.find(pos => pos.holdSide === (side === 'buy' ? 'long' : 'short') && pos.symbol === symbol);
+    if (existingPosition) {
+        console.log(`A matching ${side} position already exists. No action taken.`);
+        return;
+    }
 
-  // Check if there is already a matching pending order
-  const existingOrder = pendingOrders.find(order => order.side === side && order.symbol === symbol);
-  if (existingOrder) {
-    console.log(`A matching ${side} limit order already exists. No action taken.`);
-    return; // Skip if there's an existing pending order matching the signal
-  }
+    // Check if there is already a matching pending order
+    const existingOrder = pendingOrders.find(order => order.side === side && order.symbol === symbol);
+    if (existingOrder) {
+        console.log(`A matching ${side} limit order already exists. No action taken.`);
+        return;
+    }
 
-  // No matching position/order, proceed with placing the trade
+    // No matching position/order, proceed with placing the trade
   const productType = 'UMCBL'; 
   const marginMode = 'isolated';
   const tradeSide = 'open';
@@ -282,40 +318,50 @@ async function placeTrade(signal) {
   }
 }
 
-// Function to close opposing positions or cancel orders
-const closeOpposingPositions = async (signal) => {
-  const { symbol, side } = signal;
-  const opposingSide = side === 'buy' ? 'short' : 'long'; // Opposing position logic
+// Fetch positions and orders on startup
+(async () => {
+    await fetchOpenPositionsAndOrders();
+})();
 
-  try {
-    console.log(`Checking for opposing positions or orders before placing ${side} order.`);
-
-    // Fetch open positions
-    const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
-    const positions = positionsResponse.data || [];
-
-    // Close opposing position if it exists
-    for (const position of positions) {
-      if (position.holdSide === opposingSide && position.symbol === symbol) {
-        console.log(`Opposing ${opposingSide} position detected. Attempting to close it.`);
-        await closeOpenPositions(); // Close the position
-        console.log(`Successfully closed ${opposingSide} position for ${symbol}.`);
-      }
-    }
-
-    // Fetch open orders and cancel opposing orders
-    const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol, productType: 'SUSDT-FUTURES' });
-    const pendingOrders = pendingOrdersResponse.data?.entrustedList || [];
-
-    for (const order of pendingOrders) {
-      if (order.side !== side && order.symbol === symbol) {
-        console.log(`Opposing ${order.side} order detected. Cancelling it.`);
-        await cancelAllOrders(symbol); // Cancel the opposing order
-        console.log(`Successfully cancelled opposing ${order.side} orders for ${symbol}.`);
-      }
-    }
-
-  } catch (error) {
-    console.error('Error while closing opposing positions or cancelling orders:', error.message);
-  }
+// Mock function to get conversion rate from SUSDT to USD or GBP
+const getConversionRate = async (currency) => {
+    // Replace with actual API call to fetch the conversion rate
+    if (currency === 'USD') return 1.0; // Assuming 1 SUSDT = 1 USD as a stablecoin
+    if (currency === 'GBP') return 0.75; // For example, 1 SUSDT = 0.75 GBP
 };
+
+// Function to fetch open positions and calculate PnL in selected currency
+const fetchPnLEveryIntervalWithCurrency = (intervalMinutes = 1, currency = 'USD') => {
+    console.log(`Setting up PnL fetch every ${intervalMinutes} minutes in ${currency}...`);
+
+    // Set interval to fetch PnL at specified intervals
+    setInterval(async () => {
+        try {
+            console.log("Fetching open positions...");
+
+            // Fetch open positions
+            const positionsResponse = await restClientV2.getFuturesPositions({ productType: 'SUSDT-FUTURES' });
+            const positions = positionsResponse.data || [];
+
+            // Get conversion rate for the selected currency
+            const conversionRate = await getConversionRate(currency);
+
+            if (positions.length === 0) {
+                console.log("No open positions.");
+            } else {
+                console.log("Open positions PnL in " + currency + ":");
+                positions.forEach((position) => {
+                    const { symbol, holdSide, unrealizedPL } = position;
+                    const pnlInCurrency = unrealizedPL * conversionRate;
+
+                    console.log(`Symbol: ${symbol}, Side: ${holdSide}, PnL: ${pnlInCurrency.toFixed(2)} ${currency}`);
+                });
+            }
+        } catch (error) {
+            console.error("Error fetching PnL with currency conversion:", error.message);
+        }
+    }, intervalMinutes * 60 * 1000); // Convert minutes to milliseconds
+};
+
+// Call the function immediately to start the interval
+fetchPnLEveryIntervalWithCurrency(5, 'USD');
