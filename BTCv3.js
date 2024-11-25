@@ -13,7 +13,7 @@ const { API_KEY, API_SECRET, API_PASSPHRASE, PORT = 3000 } = process.env;
 
 // Check API credentials
 if (!API_KEY || !API_SECRET || !API_PASSPHRASE) {
-  console.error('Missing API credentials. Please check your environment variables.');
+  console.error('Missing API credentials! Please check your environment variables!');
   process.exit(1);
 }
 
@@ -25,7 +25,7 @@ const restClientV2 = new RestClientV2({
 
 // Start the Express server
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Setting Server to run on port ${PORT}`);
 });
 
 //////////// - Candle Data - ///////////////////////////
@@ -48,7 +48,7 @@ async function fetchCandleData(symbol = "SBTCSUSDT", granularity) {
             return null;
         }
         
-        console.log(`Fetched ${candleData.data.length} candle entries for ${symbol} on ${granularity} timeframe.`);
+        console.log(`Fetched ${candleData.data.length} candle entries for ${symbol} on ${granularity} timeframe`);
         
         // Format candle data for processing
         return candleData.data.map(candle => [
@@ -181,7 +181,7 @@ setInterval(async () => {
         console.log("Starting trading loop");
         const candles = await fetchCandleData(ticker, timeframes[0]);
         if (!candles) {
-            console.error("Failed to fetch candles. Exiting trading loop.");
+            console.error("Failed to fetch candles! Exiting trading loop");
             return;
         }
 
@@ -209,7 +209,7 @@ setInterval(async () => {
 // Fetch open positions and pending orders
 const fetchOpenPositionsAndOrders = async () => {
     try {
-        console.log("Fetching open positions and pending orders");
+        console.log("Setting System to fetch open positions and orders");
         // Fetch open positions
         const positionsResponse = await restClientV2.getFuturesPosition({ symbol: 'SBTCSUSDT', productType: 'SUSDT-FUTURES', marginCoin: 'SUSDT' });
         const pendingOrdersResponse = await restClientV2.getFuturesOpenOrders({ symbol: 'SBTCSUSDT', productType: 'SUSDT-FUTURES' });
@@ -236,9 +236,9 @@ const fetchOpenPositionsAndOrders = async () => {
 // Function to cancel all open orders
 const cancelAllOrders = async (symbol) => {
     try {
-        console.log(`Cancelling all orders for symbol: ${symbol}`);
+        console.log(`Cancelling all orders!`);
         const response = await restClientV2.futuresCancelAllOrders({ symbol: 'SBTCSUSDT', productType: 'SUSDT-FUTURES', marginCoin: 'SUSDT' });
-        console.log(`Cancelled all orders for symbol: ${symbol}`, response);
+        console.log(`Cancelled all orders!`, response);
     } catch (error) {
         console.error("Error cancelling all orders:", error.message);
     }
@@ -247,15 +247,15 @@ const cancelAllOrders = async (symbol) => {
 // Function to close open positions
 const closeOpenPositions = async (symbol, holdSide) => {
     try {
-        console.log(`Closing ${holdSide} position for ${symbol}`);
+        console.log(`Closing ${holdSide} position`);
         const response = await restClientV2.futuresFlashClosePositions({
             symbol: 'SBTCSUSDT',
             holdSide,
             productType: 'SUSDT-FUTURES'
         });
-        console.log(`Closed ${holdSide} position for ${symbol}`, response);
+        console.log(`Closed ${holdSide} position`, response);
     } catch (error) {
-        console.error(`Error closing ${holdSide} position for ${symbol}:`, error.message);
+        console.error(`Error closing ${holdSide} position:`, error.message);
     }
 };
 
@@ -353,7 +353,7 @@ async function placeTrade(signal) {
           takeProfitPrice = Math.round(entryPrice * (1 - takeProfitPercentage));
           stopLossPrice = Math.round(entryPrice * (1 + stopLossPercentage));
       } else {
-          throw new Error("Invalid trade side, Must be 'buy' or 'sell'.");
+          throw new Error("Invalid trade side, Must be 'buy' or 'sell'");
       }
 
       console.log(`Calculated Risk Levels for ${tradeSide.toUpperCase()} order:`);
@@ -390,7 +390,7 @@ async function placeTrade(signal) {
       tradeSide,
       orderType,
       force,
-      presetTakeProfitPrice: takeProfitPrice,
+      presetStopSurplusPrice: takeProfitPrice,
       presetStopLossPrice: stopLossPrice
     };
 
@@ -409,12 +409,7 @@ async function placeTrade(signal) {
     await fetchOpenPositionsAndOrders();
 })();
 
-// Mock function to get conversion rate from SUSDT to USD or GBP
-const getConversionRate = async (currency) => {
-    // Replace with actual API call to fetch the conversion rate
-    if (currency === 'USD') return 1.0; // Assuming 1 SUSDT = 1 USD as a stablecoin
-    if (currency === 'GBP') return 0.75; // For example, 1 SUSDT = 0.75 GBP
-};
+////////////////////////// - PnL - /////////////////////////////////////////
 
 // Function to fetch open positions and calculate PnL in selected currency
 const fetchPnLEveryIntervalWithCurrency = (intervalMinutes = 1, currency = 'USD') => {
@@ -435,12 +430,13 @@ const fetchPnLEveryIntervalWithCurrency = (intervalMinutes = 1, currency = 'USD'
             if (positions.length === 0) {
                 console.log("No open position!");
             } else {
-                console.log("Open position PnL in " + currency + ":");
+                console.log("Open position details:");
                 positions.forEach((position) => {
-                    const { symbol = 'SBTCSUSDT', holdSide, unrealizedPL } = position;
+                    const { symbol = 'SBTCSUSDT', holdSide, openPriceAvg, markPrice, breakEvenPrice, unrealizedPL } = position;
                     const pnlInCurrency = unrealizedPL * conversionRate;
 
-                    console.log(`Symbol: ${symbol}, Side: ${holdSide}, PnL: ${pnlInCurrency.toFixed(2)} ${currency}`);
+                    console.log(`${symbol}: ${markPrice}, Entry Price: ${openPriceAvg}, Break Even Price: ${breakEvenPrice}`);
+                    console.log(`PnL: ${pnlInCurrency.toFixed(2)} ${currency}, Side: ${holdSide}`);
                 });
             }
         } catch (error) {
@@ -452,102 +448,252 @@ const fetchPnLEveryIntervalWithCurrency = (intervalMinutes = 1, currency = 'USD'
 // Call the function immediately to start the interval
 fetchPnLEveryIntervalWithCurrency(1, 'GBP');
 
-///////////////////// TESTING ////////////////////////////////////////////
+// Mock function to get conversion rate from SUSDT to USD or GBP
+const getConversionRate = async (currency) => {
+    // Replace with actual API call to fetch the conversion rate
+    if (currency === 'USD') return 1.0; // Assuming 1 SUSDT = 1 USD as a stablecoin
+    if (currency === 'GBP') return 0.75; // For example, 1 SUSDT = 0.75 GBP
+};
 
-const adjustStopLossToBreakEven = (intervalMinutes = 2, profitWaitMinutes = 5) => {
+////////////////////// - Manage Break Even Stoploss - ///////////////////////////////////////
+
+// Cancel existing stop loss orders
+const cancelPreviousStopLoss = async (symbol, holdSide) => {
+    try {
+        const stopLossOrders = await hasExistingStopLoss(symbol, holdSide);
+
+        if (stopLossOrders.length > 0) {
+            console.log(`Cancelling ${stopLossOrders.length} Stop Loss orders`);
+            for (const order of stopLossOrders) {
+                const orderId = order.orderId;
+                const cancelResponse = await restClientV2.futuresCancelPlanOrder({
+                    symbol,
+                    productType: 'SUSDT-FUTURES',
+                    marginCoin: 'SUSDT',
+                    orderId,
+                    clientOid: `${Date.now()}`,
+                });
+
+                if (cancelResponse?.code === '00000') {
+                    console.log(`Stop Loss order with ID ${orderId} cancelled successfully`);
+                } else {
+                    console.error(`Failed to cancel Stop Loss order with ID ${orderId}: ${cancelResponse?.msg}`);
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Error canceling Stop Loss orders:", error.message);
+    }
+};
+
+// Get stop loss orders
+const hasExistingStopLoss = async (symbol) => {
+    try {
+        const params = {
+            productType: 'SUSDT-FUTURES',
+            planType: 'profit_loss',
+            symbol,
+        };
+
+        console.log(`Fetching Stop Loss orders`);
+        const response = await restClientV2.getFuturesPlanOrders(params);
+
+        if (response?.code !== '00000') {
+            console.error(`Failed to fetch Stop Loss orders: ${response?.msg}`);
+            return [];
+        }
+
+        const orders = response?.data?.entrustedList || [];
+        console.log(`Found ${orders.length} Stop Loss orders!`);
+        return orders;
+    } catch (error) {
+        console.error("Error fetching Stop Loss orders:", error.message);
+        return [];
+    }
+};
+
+// Adjust Stop Loss to Break Even
+const adjustStopLossToBreakEven = (intervalMinutes = 5, profitWaitMinutes = 15) => {
     console.log(`Setting Stop Loss adjustment to run every ${intervalMinutes} minutes`);
 
-    // Store adjusted positions to ensure SL is set only once
-    const adjustedPositions = new Set();
-
     setInterval(async () => {
-        console.log("Checking open positions for stop loss adjustment...");
+        console.log("Checking open positions for Stop Loss adjustment");
+
         try {
             const positionsResponse = await restClientV2.getFuturesPosition({
-                symbol: 'SBTCSUSDT', // Adjust symbol as necessary
-                productType: 'SUSDT-FUTURES', // Ensure correct product type
-                marginCoin: 'SUSDT' // Ensure correct margin coin
+                symbol: 'SBTCSUSDT',
+                productType: 'SUSDT-FUTURES',
+                marginCoin: 'SUSDT',
             });
 
             if (!positionsResponse || positionsResponse.code !== '00000') {
                 console.error(`Failed to fetch positions: ${positionsResponse?.msg || "Unknown error"}`);
-                console.log("Full response:", JSON.stringify(positionsResponse, null, 2));
                 return;
             }
 
-            const positions = positionsResponse?.data || [];
-            if (positions.length === 0) {
-                console.log("No open positions found. Skipping stop loss adjustment.");
-                adjustedPositions.clear(); // Clear if no positions are open
+            const positions = positionsResponse.data || [];
+            if (!positions.length) {
+                console.log("No open positions found");
                 return;
             }
 
             for (const position of positions) {
                 const { symbol, holdSide, unrealizedPL, available, breakEvenPrice } = position;
 
-                console.log(`Position Details - Symbol: ${symbol}, Side: ${holdSide}, PnL: ${unrealizedPL}`);
-                console.log(`Break-Even Price: ${breakEvenPrice}`);
-
-                // Check if stop loss already set
-                if (adjustedPositions.has(symbol)) {
-                    console.log(`Stop loss for ${symbol} already adjusted. Skipping.`);
+                if (!breakEvenPrice || unrealizedPL <= 0) {
+                    console.log(`Position not in profit or no break even price, Skipping!`);
                     continue;
                 }
 
-                if (unrealizedPL > 0) {
-                    console.log(`Position is in profit. Monitoring for stop loss adjustment for ${symbol}.`);
+                const stopLossOrders = await hasExistingStopLoss(symbol, holdSide);
+                if (stopLossOrders.length > 0) {
+                    const currentSLPrice = stopLossOrders[0].triggerPrice;
+                    const breakEvenPriceFloat = parseFloat(breakEvenPrice).toFixed(1);
+                    const currentSLPriceFloat = parseFloat(currentSLPrice).toFixed(1);
 
-                    // Delay setting stop loss to breakeven
-                    setTimeout(async () => {
-                        if (adjustedPositions.has(symbol)) return; // Stop if already set
+                    console.log(`Current Stop Loss: ${currentSLPriceFloat}, Break Even: ${breakEvenPriceFloat}`);
 
-                        console.log(`Setting stop loss for ${symbol} after ${profitWaitMinutes} minutes.`);
-                        const stopLossPrice = parseFloat(breakEvenPrice).toFixed(1); // Format to 1 decimal place
-                        if (isNaN(stopLossPrice) || stopLossPrice <= 0) {
-                            console.error(`Invalid break-even price for ${symbol}: ${breakEvenPrice}`);
-                            return;
-                        }
-
-                        const payload = {
-                            marginCoin: 'SUSDT',
-                            productType: 'SUSDT-FUTURES',
-                            symbol: symbol,
-                            planType: 'pos_loss',
-                            triggerPrice: stopLossPrice, // Trigger price at break-even
-                            triggerType: 'fill_price',
-                            executePrice: '0', // Market execution
-                            holdSide: holdSide, // Use 'long' or 'short' based on the position
-                            size: available, // Quantity from the position
-                            clientOid: `${Date.now()}` // Unique identifier
-                        };
-
-                        console.log("Stop Loss Adjustment Payload:", JSON.stringify(payload, null, 2));
-
-                        try {
-                            const modifyResponse = await restClientV2.futuresSubmitTPSLOrder(payload);
-
-                            if (modifyResponse?.code === '00000') {
-                                console.log(`Stop loss for ${symbol} successfully adjusted to break-even:`, JSON.stringify(modifyResponse.data, null, 2));
-                                adjustedPositions.add(symbol); // Mark as adjusted
-                            } else {
-                                console.error(`Failed to adjust stop loss for ${symbol}: ${modifyResponse?.msg}`);
-                                console.log("Full response:", JSON.stringify(modifyResponse, null, 2));
-                            }
-                        } catch (error) {
-                            console.error(`Error while modifying stop loss for ${symbol}:`, error.response?.data || error.message);
-                            console.log("Error details:", error);
-                        }
-                    }, profitWaitMinutes * 60 * 1000); // Wait before setting SL
-                } else {
-                    console.log(`Position for ${symbol} is not in profit. No stop loss adjustment needed.`);
+                    if (currentSLPriceFloat !== breakEvenPriceFloat) {
+                        console.log(`Mismatch detected, Cancelling old Stop Loss and setting a new one!`);
+                        await cancelPreviousStopLoss(symbol, holdSide);
+                    } else {
+                        console.log(`Stop Loss matches Break Even price, Skipping adjustment!`);
+                        continue;
+                    }
                 }
+
+                console.log(`Setting new stop loss at Break Even price after ${profitWaitMinutes} minutes`);
+                setTimeout(async () => {
+                    const stopLossPrice = parseFloat(breakEvenPrice).toFixed(1);
+                    if (isNaN(stopLossPrice) || stopLossPrice <= 0) {
+                        console.error(`Invalid Break Even price: ${breakEvenPrice}`);
+                        return;
+                    }
+
+                    const payload = {
+                        marginCoin: 'SUSDT',
+                        productType: 'SUSDT-FUTURES',
+                        symbol,
+                        planType: 'pos_loss',
+                        triggerPrice: stopLossPrice,
+                        triggerType: 'fill_price',
+                        executePrice: '0',
+                        holdSide,
+                        size: available,
+                        clientOid: `${Date.now()}`,
+                    };
+
+                    console.log("Stop Loss Payload:", JSON.stringify(payload, null, 2));
+
+                    try {
+                        const response = await restClientV2.futuresSubmitTPSLOrder(payload);
+
+                        if (response?.code === '00000') {
+                            console.log(`Stop Loss successfully set at Break Even:`, response.data);
+                        } else {
+                            console.error(`Failed to set Stop Loss: ${response?.msg}`);
+                        }
+                    } catch (error) {
+                        console.error(`Error setting Stop Loss:`, error.response?.data || error.message);
+                    }
+                }, profitWaitMinutes * 60 * 1000);
             }
         } catch (error) {
-            console.error("Error during stop loss adjustment process:", error.response?.data || error.message);
-            console.log("Error details:", error);
+            console.error("Error during Stop Loss adjustment:", error.response?.data || error.message);
         }
     }, intervalMinutes * 60 * 1000);
 };
 
-// Start the function immediately with a 2-minute interval and 5-minute profit wait
-adjustStopLossToBreakEven(2, 5);
+// Start function with interval and profit wait time
+adjustStopLossToBreakEven(5, 15);
+
+////////////////////////////////// - TESTING - //////////////////////////////////////////////
+
+const calculateTPOrders = async (symbol, tpPercentages = [1.03, 1.05, 1.08]) => {
+    try {
+        console.log(`Fetching position`);
+
+        const positionResponse = await restClientV2.getFuturesPosition({
+            symbol,
+            productType: 'SUSDT-FUTURES',
+            marginCoin: 'SUSDT',
+        });
+
+        if (!positionResponse || positionResponse.code !== '00000') {
+            console.error(`Failed to fetch position: ${positionResponse?.msg || "Unknown error"}`);
+            return;
+        }
+
+        const position = positionResponse.data[0];
+        if (!position || parseFloat(position.available) <= 0) {
+            console.log(`No available amount! Available: ${position?.available}`);
+            return;
+        }
+
+        const { available, openPriceAvg, holdSide, unrealizedPL, marginSize } = position;
+        const tpAmount = parseFloat(available);
+        const maxTPOrders = Math.min(3, Math.floor(tpAmount / 0.001)); // Maximum 3 TP orders based on available
+
+        console.log(`Available=${tpAmount}, UnrealizedPL=${unrealizedPL}, MarginSize=${marginSize}`);
+
+        // Check if unrealizedPL meets or exceeds marginSize before setting TPs
+        if (parseFloat(unrealizedPL) < parseFloat(marginSize)) {
+            console.log(`Unrealized PL (${unrealizedPL}) is below marginSize (${marginSize})`);
+            return;
+        }
+
+        console.log(`Placing up to ${maxTPOrders} TP orders`);
+
+        for (let i = 0; i < maxTPOrders; i++) {
+            const percent = tpPercentages[i] || tpPercentages[tpPercentages.length - 1];
+            const tpPrice = holdSide === 'long'
+                ? (openPriceAvg * percent).toFixed(2)
+                : (openPriceAvg * (1 - (percent - 1))).toFixed(2);
+
+            const tpSize = (tpAmount / maxTPOrders).toFixed(6); // Divide available equally
+
+            const tpPayload = {
+                planType: 'normal_plan',
+                symbol,
+                productType: 'SUSDT-FUTURES',
+                marginMode: "isolated",
+                marginCoin: 'SUSDT',
+                size: tpSize.toString(),
+                price: tpPrice.toString(),
+                triggerPrice: tpPrice.toString(),
+                triggerType: 'mark_price',
+                side: holdSide === 'long' ? 'sell' : 'buy', // Opposite side to close the position
+                tradeSide: 'close',
+                orderType: 'limit',
+                clientOid: `${Date.now()}_${i}`,
+                reduceOnly: 'YES',
+            };
+
+            try {
+                console.log(`Submitting TP Order:`, JSON.stringify(tpPayload, null, 2));
+                const tpResponse = await restClientV2.futuresSubmitPlanOrder(tpPayload);
+
+                if (tpResponse?.code === '00000') {
+                    console.log(`TP Order placed successfully:`, tpResponse.data);
+                } else {
+                    console.error(`Failed to place TP Order:`, tpResponse?.msg);
+                }
+            } catch (error) {
+                console.error(`Exception placing TP Order:`, error.message);
+            }
+        }
+
+        console.log(`TP calculations and orders completed.`);
+    } catch (error) {
+        console.error(`Exception in calculateTPOrders:`, error.message);
+    }
+};
+
+// Monitor TP every 5 minutes
+setInterval(async () => {
+    try {
+        await calculateTPOrders("SBTCSUSDT", [1.03, 1.05, 1.08]);
+    } catch (error) {
+        console.error(`Error during TP monitoring: ${error.message}`);
+    }
+}, 5 * 60 * 1000);
