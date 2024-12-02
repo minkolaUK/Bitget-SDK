@@ -137,7 +137,7 @@ function calculateRSI(candles, period) {
     });
 }
 
-//////////// - Trading Logic - ///////////////////////////
+/////////////////////// - Trading Logic - /////////////////////////////
 
 // Calculate trading signals (buy/sell) based on indicators
 function calculateTradingSignals(candles) {
@@ -176,7 +176,7 @@ function calculateTradingSignals(candles) {
     };
 }
 
-///////////////// - Main Trading Loop - ///////////////////////////
+/////////////////////// - Main Trading Loop - /////////////////////////////
 
 // Main Trading Loop
 const ticker = 'SBTCSUSDT';
@@ -192,7 +192,7 @@ setInterval(async () => {
         let latestPrice = 0;  // Track latest price from the last processed timeframe
 
         // Start fetching all candle data once
-        console.log("Fetching candle data for timeframes:", timeframes.join(", "));
+        console.log("Fetching candle data");
 
         // Loop through each timeframe to evaluate signals
         for (const timeframe of timeframes) {
@@ -215,7 +215,7 @@ setInterval(async () => {
                 activeSellSignal = true;
             }
 
-            latestPrice = signals.latestPrice;  // Update with latest price for trade execution
+            latestPrice = signals.latestPrice;
         }
 
         // Check if there is an active buy or sell signal and place corresponding order
@@ -245,7 +245,7 @@ setInterval(async () => {
     }
 }, 60 * 1000);  // Repeat the loop every minute
 
-//////////// - Place Trade - Check Positions & Orders - ///////////////////////
+/////////////////////////// - Place Trade - ///////////////////////////////////////////
 
 // Fetch open positions and pending orders
 const fetchOpenPositionsAndOrders = async () => {
@@ -376,7 +376,7 @@ async function placeTrade(signal) {
 
     // Calculate take profit and stop loss
     const stopLossPercentage = 0.01; // 1% stop loss
-    const takeProfitPercentage = 0.05; // 5% take profit
+    const takeProfitPercentage = 1.05; // 100% take profit
 
    /**
    * Calculate take profit and stop loss prices dynamically.
@@ -431,7 +431,7 @@ async function placeTrade(signal) {
       tradeSide,
       orderType,
       force,
-      presetStopSurplusPrice: takeProfitPrice,
+      //presetStopSurplusPrice: takeProfitPrice,
       presetStopLossPrice: stopLossPrice
     };
 
@@ -494,7 +494,7 @@ const getConversionRate = async (currency) => {
     if (currency === 'GBP') return 0.75;
 };
 
-////////////////////// - Manage Break Even Stoploss - ///////////////////////////////////////
+////////////////////// - Manage Break Even & Stoploss - ///////////////////////////////////////
 
 // Cancel existing stop loss orders
 const cancelPreviousStopLoss = async (symbol, holdSide) => {
@@ -558,13 +558,13 @@ const hasExistingStopLoss = async (symbol) => {
     }
 };
 
-
-// Adjust Stop Loss to Break Even
+// Adjust Stop Loss to Break Even Price
 const adjustStopLossToBreakEven = (intervalMinutes = 5, profitWaitMinutes = 15) => {
     console.log(`Setting Stop Loss adjustment to run every ${intervalMinutes} minutes`);
 
     setInterval(async () => {
         try {
+            // Fetch open positions
             const positionsResponse = await restClientV2.getFuturesPosition({
                 symbol: 'SBTCSUSDT',
                 productType: 'SUSDT-FUTURES',
@@ -578,6 +578,7 @@ const adjustStopLossToBreakEven = (intervalMinutes = 5, profitWaitMinutes = 15) 
 
             const positions = positionsResponse.data || [];
             if (positions.length === 0) {
+                console.log("No open positions found, Skipping");
                 return;
             }
 
@@ -585,47 +586,40 @@ const adjustStopLossToBreakEven = (intervalMinutes = 5, profitWaitMinutes = 15) 
                 const { symbol, holdSide, unrealizedPL, available, breakEvenPrice } = position;
 
                 if (!breakEvenPrice || unrealizedPL <= 0) {
-                    console.log(`Position is not in profit or break even price is unavailable, Skipping!`);
+                    console.log(`Position not in profit or break even price unavailable`);
                     continue;
                 }
 
+                // Check for existing stop loss orders
                 const stopLossOrders = await hasExistingStopLoss(symbol, holdSide);
-                let initialSLConfirmed = false;
+                const initialSLOrder = stopLossOrders.find(order => order.planType === 'loss_plan');
 
-                // Check for an existing "loss_plan" stop loss order
-                for (const order of stopLossOrders) {
-                    if (order.planType === 'loss_plan') {
-                        console.log(`First SL set, Trigger Price: ${order.triggerPrice}`);
-                        initialSLConfirmed = true;
-                        break;
-                    }
-                }
-
-                if (!initialSLConfirmed) {
-                    console.error(`First SL not found, Ensure the trade has an initial stop loss!`);
+                if (!initialSLOrder) {
+                    console.error(`Initial Stop Loss not found, Ensure an initial Stop Loss is set`);
                     continue;
                 }
 
-                // Check for "pos_loss" stop loss and its price
-                let breakEvenPriceFloat = parseFloat(breakEvenPrice).toFixed(1);
-                let existingSLOrder = stopLossOrders.find(order => order.planType === 'pos_loss');
+                console.log(`Initial SL found, Trigger Price: ${initialSLOrder.triggerPrice}`);
 
-                if (existingSLOrder) {
-                    let currentSLPrice = parseFloat(existingSLOrder.triggerPrice).toFixed(1);
-                    console.log(`Break Evan Stop Loss now set, Break Even Price: ${breakEvenPriceFloat}`);
+                const existingBreakEvenOrder = stopLossOrders.find(order => order.planType === 'pos_loss');
+                const breakEvenPriceFloat = parseFloat(breakEvenPrice).toFixed(1);
+
+                if (existingBreakEvenOrder) {
+                    const currentSLPrice = parseFloat(existingBreakEvenOrder.triggerPrice).toFixed(1);
 
                     if (currentSLPrice === breakEvenPriceFloat) {
-                        console.log(`Stop Loss already set to Break Even Price, Skipping!`);
+                        console.log(`Stop Loss already set to Break Even Price`);
                         continue;
                     } else {
-                        console.log(`Break Even Stop Loss does not match break even price, Cancelling!`);
+                        console.log(`Stop Loss does not match Break Even Price (${currentSLPrice} !== ${breakEvenPriceFloat}). Cancelling existing SL`);
                         await cancelPreviousStopLoss(symbol, holdSide);
                     }
                 }
 
-                console.log(`Setting a new Stop Loss to Break Even Price in ${profitWaitMinutes} minutes`);
+                console.log(`Setting Stop Loss to Break Even Price (${breakEvenPriceFloat}) in ${profitWaitMinutes} minutes`);
                 setTimeout(async () => {
                     const stopLossPrice = parseFloat(breakEvenPrice).toFixed(1);
+
                     if (isNaN(stopLossPrice) || stopLossPrice <= 0) {
                         console.error(`Invalid break even price: ${breakEvenPrice}`);
                         return;
@@ -644,18 +638,17 @@ const adjustStopLossToBreakEven = (intervalMinutes = 5, profitWaitMinutes = 15) 
                         clientOid: `${Date.now()}`,
                     };
 
-                    console.log("Stop Loss Payload:", JSON.stringify(payload, null, 2));
-
                     try {
                         const response = await restClientV2.futuresSubmitTPSLOrder(payload);
 
                         if (response?.code === '00000') {
-                            console.log(`Second SL set to Break Even Price:`, response.data);
+                            console.log(`Stop Loss successfully set to Break Even Price`);
+                            console.log(`Trigger Price: ${payload.triggerPrice}, Size: ${payload.size}`);
                         } else {
-                            console.error(`Failed to set Second SL: ${response?.msg}`);
+                            console.error(`Failed to set Stop Loss: ${response?.msg}`);
                         }
                     } catch (error) {
-                        console.error(`Error setting Second SL:`, error.response?.data || error.message);
+                        console.error(`Error setting Stop Loss:`, error.response?.data || error.message);
                     }
                 }, profitWaitMinutes * 60 * 1000);
             }
@@ -668,8 +661,7 @@ const adjustStopLossToBreakEven = (intervalMinutes = 5, profitWaitMinutes = 15) 
 // Start function with interval and profit wait time
 adjustStopLossToBreakEven(5, 15);
 
-////////////////////////////////// - TESTING - //////////////////////////////////////////////
-
+// Calculate Take Profit Orders
 const calculateTPOrders = async (symbol) => {
     try {
         const positionResponse = await restClientV2.getFuturesPosition({
@@ -693,11 +685,11 @@ const calculateTPOrders = async (symbol) => {
         const tpAmount = parseFloat(available);
         const maxTPOrders = Math.min(3, Math.floor(tpAmount / 0.001));
 
-        console.log(`Available: ${tpAmount}, PnL: ${unrealizedPL}, Amount: ${marginSize}`);
+        console.log(`Amount: ${tpAmount}`);
 
         // Ensure PnL meets the margin threshold before setting TP orders
         if (parseFloat(unrealizedPL) < parseFloat(marginSize) * 0.50) {
-            console.log(`Unrealised PnL is below 50% of Amount`);
+            console.log(`PnL: ${unrealizedPL} is below 50% of Available: ${marginSize} to set Take Profit`);
             return;
         }
 
@@ -759,7 +751,6 @@ const calculateTPOrders = async (symbol) => {
     }
 };
 
-// Monitor and place TP orders every 5 minutes
 setInterval(async () => {
     try {
         await calculateTPOrders("SBTCSUSDT");
